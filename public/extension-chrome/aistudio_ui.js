@@ -37,6 +37,9 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
             Halt
           </button>
+          <button id="oo-clear-mem-btn" class="oo-btn oo-btn-secondary" title="Clear Stored Memory">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
         </div>
 
         <div class="oo-input-group">
@@ -60,6 +63,7 @@
   const maximizeBtn = document.getElementById('oo-maximize-btn');
   const startBtn = document.getElementById('oo-start-btn');
   const stopBtn = document.getElementById('oo-stop-btn');
+  const clearMemBtn = document.getElementById('oo-clear-mem-btn');
   const goalInput = document.getElementById('oo-goal-input');
   const logsDiv = document.getElementById('oo-logs');
   const statusDot = document.getElementById('oo-status-dot');
@@ -133,6 +137,12 @@
 
   stopBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'STOP_ORCHESTRATION' });
+  });
+
+  clearMemBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
+    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
+    logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
   // Auto-activate on load

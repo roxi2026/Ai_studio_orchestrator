@@ -76,6 +76,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     log('Orchestration stopped by user.');
     saveState();
   }
+  if (message.action === 'CLEAR_MEMORY') {
+    state.memory = {};
+    log('Memory cleared by user.');
+    saveState();
+  }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
 });
 
@@ -104,7 +109,16 @@ RULES & SYNTACTIC SUGAR:
 2. <SESSION_ACTION>CONTINUE</SESSION_ACTION> : Execute the next step in the CURRENT session.
 3. <SESSION_ACTION>NEW_CHAT</SESSION_ACTION> : Start a FRESH session (to clear context window).
 4. <PROMPT>your prompt here</PROMPT> : Provide the prompt for the next step (or new session).
-5. <PUPPET_DEPLOY url="https://example.com"><PUPPET_COMMAND>EXTRACT_TEXT body</PUPPET_COMMAND></PUPPET_DEPLOY> : Deploy the puppet recon "free agent" to a URL and execute a command. Available commands: EXTRACT_TEXT [selector], EXTRACT_HTML [selector], GET_LINKS, CLICK [selector].
+5. <PUPPET_DEPLOY url="https://example.com"><PUPPET_COMMAND>EXTRACT_TEXT body</PUPPET_COMMAND></PUPPET_DEPLOY> : Deploy the puppet recon "free agent" to a URL and execute a command.
+   Available commands:
+   - EXTRACT_TEXT [selector]
+   - EXTRACT_HTML [selector]
+   - GET_LINKS
+   - CLICK [selector]
+   - FILL [selector] [value]
+   - WAIT [ms]
+   - SCROLL_BOTTOM
+   - EVAL [js code]
 6. <DONE>Final result</DONE> : When the entire goal is complete.
 
 Begin your planning and output your first action.`;
@@ -197,7 +211,22 @@ async function deployPuppet(url, command) {
       log('Puppet tab loaded. Executing command...');
       
       setTimeout(() => {
+        let responded = false;
+        
+        // Timeout mechanism
+        const timeoutId = setTimeout(() => {
+          if (!responded) {
+            responded = true;
+            log(`Puppet execution timed out after 15s.`);
+            reportPuppetResult(`Error: Execution timed out.`);
+          }
+        }, 15000);
+
         chrome.tabs.sendMessage(state.puppetTabId, { action: 'PUPPET_EXECUTE', command }, (response) => {
+          if (responded) return;
+          responded = true;
+          clearTimeout(timeoutId);
+
           if (chrome.runtime.lastError) {
             log(`Puppet execution error: ${chrome.runtime.lastError.message}`);
             reportPuppetResult(`Error: ${chrome.runtime.lastError.message}`);
@@ -206,7 +235,7 @@ async function deployPuppet(url, command) {
           
           if (response && response.status === 'success') {
             log('Puppet execution successful.');
-            reportPuppetResult(response.result);
+            reportPuppetResult(JSON.stringify(response.result));
           } else {
             log(`Puppet execution failed: ${response ? response.error : 'Unknown error'}`);
             reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);

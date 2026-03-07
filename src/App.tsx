@@ -31,7 +31,7 @@ export default function App() {
       }
 
       const content = await zip.generateAsync({ type: 'blob' });
-      saveAs(content, `omnipotent-ai-orchestrator-v6-chrome.zip`);
+      saveAs(content, `omnipotent-ai-orchestrator-v6.1-chrome.zip`);
     } catch (error) {
       console.error('Error creating zip:', error);
       alert(`Failed to download extension files.`);
@@ -45,14 +45,14 @@ export default function App() {
         <div className="max-w-4xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-sm font-medium mb-6 border border-blue-500/30">
             <GitMerge className="w-4 h-4" />
-            v6.0 "Central Command & Puppet Agency" Update
+            v6.1 "Central Command & Puppet Agency" Update
           </div>
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-6">
             Omnipotent AI Orchestrator
           </h1>
           <p className="text-xl text-zinc-400 max-w-2xl leading-relaxed mb-8">
             Transform Google AI Studio into a self-directing meta-agent powered by <strong>Central Command (CC)</strong>. 
-            Now featuring an evolved <strong>Puppet Agency</strong> that can directly bring in web content on demand using advanced syntactic sugar and markdown procedures.
+            Now featuring an evolved <strong>Puppet Agency</strong> that can directly bring in web content on demand using advanced syntactic sugar and markdown procedures. Includes new commands like SCROLL, FILL, and WAIT.
           </p>
           <div className="flex flex-col sm:flex-row gap-4">
             <button
@@ -127,7 +127,7 @@ export default function App() {
                 Desktop (Google Chrome)
               </h3>
               <ol className="list-decimal list-inside space-y-3 text-zinc-600">
-                <li>Download and extract the <code className="bg-zinc-100 px-1.5 py-0.5 rounded text-sm">omnipotent-ai-orchestrator-v6-chrome.zip</code> file.</li>
+                <li>Download and extract the <code className="bg-zinc-100 px-1.5 py-0.5 rounded text-sm">omnipotent-ai-orchestrator-v6.1-chrome.zip</code> file.</li>
                 <li>Open Chrome and navigate to <code className="bg-zinc-100 px-1.5 py-0.5 rounded text-sm">chrome://extensions/</code>.</li>
                 <li>Enable <strong>Developer mode</strong> in the top right corner.</li>
                 <li>Click <strong>Load unpacked</strong> and select the extracted folder.</li>
