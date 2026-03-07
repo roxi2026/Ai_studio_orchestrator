@@ -82,6 +82,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
+  
+  if (message.action === 'CAPTURE_SCREENSHOT') {
+    chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 50 }, (dataUrl) => {
+      sendResponse({ dataUrl });
+    });
+    return true; // Keep channel open for async response
+  }
 });
 
 async function startOrchestration(goal) {
@@ -116,10 +123,49 @@ RULES & SYNTACTIC SUGAR:
    - GET_LINKS
    - CLICK [selector]
    - FILL [selector] [value]
+   - SELECT [selector] [value]
+   - HOVER [selector]
+   - DOUBLE_CLICK [selector]
+   - RIGHT_CLICK [selector]
+   - FOCUS [selector]
+   - BLUR [selector]
+   - CHECK [selector]
+   - UNCHECK [selector]
+   - SCROLL_WINDOW [x] [y]
+   - DRAG_AND_DROP [source_selector] [target_selector]
+   - PRESS [selector] [key]
+   - SMART_FILL_FORM [form_selector] [objective_json]
+   - ASSERT_STATE [selector] [condition] [expectedValue]
+   - ANALYZE_CONTEXT [selector]
+   - SMART_ADVANCE
+   - SMART_LOGIN [username] [password]
+   - EXTRACT_SPATIAL
+   - READ_ARTICLE [optional JSON config: {"metadataSelectors": {"key": "selector"}, "excludeSelectors": [".ad"]}]
+   - SCREENSHOT
    - WAIT [ms]
    - SCROLL_BOTTOM
    - EVAL [js code]
-6. <DONE>Final result</DONE> : When the entire goal is complete.
+   - GET_URL
+   - GET_TITLE
+   - GET_ATTRIBUTE [selector] [attrName]
+   - CHECK_EXISTS [selector]
+   - COUNT_ELEMENTS [selector]
+   - SCROLL_TO [selector]
+   - CLEAR_INPUT [selector]
+   - SUBMIT_FORM [selector]
+   - NAVIGATE [url]
+   - RELOAD
+   - GO_BACK
+   - GO_FORWARD
+   - GET_LOCAL_STORAGE [key]
+   - SET_LOCAL_STORAGE [key] [value]
+6. <PUPPET_CHAIN url="https://example.com">
+     <CMD>CLICK #btn</CMD>
+     <CMD>WAIT 1000</CMD>
+     <CMD>EXTRACT_TEXT body</CMD>
+   </PUPPET_CHAIN> : Deploy the puppet to execute a sequence of commands without waiting for round-trips.
+7. <THINK>your reasoning here</THINK> : Use this to plan your next move before outputting actions.
+8. <DONE>Final result</DONE> : When the entire goal is complete.
 
 Begin your planning and output your first action.`;
   
@@ -157,13 +203,29 @@ async function handleModelOutput(text) {
     return; // Wait for puppet to respond
   }
 
+  // Parse PUPPET_CHAIN
+  const puppetChainMatch = text.match(/<PUPPET_CHAIN url="([^"]+)">([\s\S]*?)<\/PUPPET_CHAIN>/);
+  if (puppetChainMatch) {
+    const url = puppetChainMatch[1];
+    const commandsText = puppetChainMatch[2];
+    const cmdRegex = /<CMD>([\s\S]*?)<\/CMD>/g;
+    const commands = [];
+    let cmdMatch;
+    while ((cmdMatch = cmdRegex.exec(commandsText)) !== null) {
+      commands.push(cmdMatch[1].trim());
+    }
+    log(`Deploying puppet chain to ${url} with ${commands.length} commands`);
+    await deployPuppetChain(url, commands);
+    return; // Wait for puppet to respond
+  }
+
   // Parse SESSION_ACTION
   const actionMatch = text.match(/<SESSION_ACTION>(NEW_CHAT|CONTINUE)<\/SESSION_ACTION>/);
   const promptMatch = text.match(/<PROMPT>([\s\S]*?)<\/PROMPT>/);
 
   if (!actionMatch || !promptMatch) {
     log('Missing SESSION_ACTION or PROMPT tags. Asking model to correct.');
-    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System Error: Please provide both <SESSION_ACTION> and <PROMPT> tags, or a <PUPPET_DEPLOY> tag.' });
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System Error: Please provide both <SESSION_ACTION> and <PROMPT> tags, or a <PUPPET_DEPLOY> or <PUPPET_CHAIN> tag.' });
     return;
   }
 
@@ -177,7 +239,7 @@ async function handleModelOutput(text) {
       ? `\n\n[SYSTEM INJECTED MEMORY FROM PREVIOUS SESSIONS]\n${JSON.stringify(state.memory, null, 2)}\n[/SYSTEM INJECTED MEMORY]`
       : '';
     
-    state.pendingPrompt = `You are continuing a multi-session workflow. Here is the context and your next prompt:\n${memoryContext}\n\n[NEXT PROMPT]\n${nextPrompt}\n[/NEXT PROMPT]\n\nRemember to use <MEMORY_STORE>, <SESSION_ACTION>, <PROMPT>, and <PUPPET_DEPLOY> tags to continue orchestrating.`;
+    state.pendingPrompt = `You are continuing a multi-session workflow. Here is the context and your next prompt:\n${memoryContext}\n\n[NEXT PROMPT]\n${nextPrompt}\n[/NEXT PROMPT]\n\nRemember to use <MEMORY_STORE>, <SESSION_ACTION>, <PROMPT>, <PUPPET_DEPLOY>, and <PUPPET_CHAIN> tags to continue orchestrating.`;
     saveState();
     
     // Trigger session handoff
@@ -189,64 +251,144 @@ async function handleModelOutput(text) {
 }
 
 async function deployPuppet(url, command) {
+  let tab;
   // Create or update puppet tab
   if (state.puppetTabId) {
     try {
-      await chrome.tabs.update(state.puppetTabId, { url, active: false });
+      tab = await chrome.tabs.get(state.puppetTabId);
+      if (tab.url !== url) {
+        tab = await chrome.tabs.update(state.puppetTabId, { url, active: false });
+      }
     } catch (e) {
-      const tab = await chrome.tabs.create({ url, active: false });
+      tab = await chrome.tabs.create({ url, active: false });
       state.puppetTabId = tab.id;
     }
   } else {
-    const tab = await chrome.tabs.create({ url, active: false });
+    tab = await chrome.tabs.create({ url, active: false });
     state.puppetTabId = tab.id;
   }
   
   saveState();
 
-  // Wait for tab to finish loading
-  chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
-    if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
-      chrome.tabs.onUpdated.removeListener(listener);
-      log('Puppet tab loaded. Executing command...');
+  const execute = () => {
+    log('Puppet tab ready. Executing command...');
+    setTimeout(() => {
+      let responded = false;
       
-      setTimeout(() => {
-        let responded = false;
-        
-        // Timeout mechanism
-        const timeoutId = setTimeout(() => {
-          if (!responded) {
-            responded = true;
-            log(`Puppet execution timed out after 15s.`);
-            reportPuppetResult(`Error: Execution timed out.`);
-          }
-        }, 15000);
-
-        chrome.tabs.sendMessage(state.puppetTabId, { action: 'PUPPET_EXECUTE', command }, (response) => {
-          if (responded) return;
+      // Timeout mechanism
+      const timeoutId = setTimeout(() => {
+        if (!responded) {
           responded = true;
-          clearTimeout(timeoutId);
+          log(`Puppet execution timed out after 15s.`);
+          reportPuppetResult(`Error: Execution timed out.`);
+        }
+      }, 15000);
 
-          if (chrome.runtime.lastError) {
-            log(`Puppet execution error: ${chrome.runtime.lastError.message}`);
-            reportPuppetResult(`Error: ${chrome.runtime.lastError.message}`);
-            return;
-          }
-          
-          if (response && response.status === 'success') {
-            log('Puppet execution successful.');
-            reportPuppetResult(JSON.stringify(response.result));
-          } else {
-            log(`Puppet execution failed: ${response ? response.error : 'Unknown error'}`);
-            reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
-          }
-        });
-      }, 2000); // Give scripts a moment to initialize
+      chrome.tabs.sendMessage(state.puppetTabId, { action: 'PUPPET_EXECUTE', command }, (response) => {
+        if (responded) return;
+        responded = true;
+        clearTimeout(timeoutId);
+
+        if (chrome.runtime.lastError) {
+          log(`Puppet execution error: ${chrome.runtime.lastError.message}`);
+          reportPuppetResult(`Error: ${chrome.runtime.lastError.message}`);
+          return;
+        }
+        
+        if (response && response.status === 'success') {
+          log('Puppet execution successful.');
+          reportPuppetResult(JSON.stringify(response.result));
+        } else {
+          log(`Puppet execution failed: ${response ? response.error : 'Unknown error'}`);
+          reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
+        }
+      });
+    }, 2000); // Give scripts a moment to initialize
+  };
+
+  if (tab.status === 'complete' && tab.url === url) {
+    execute();
+  } else {
+    // Wait for tab to finish loading
+    chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
+      if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        execute();
+      }
+    });
+  }
+}
+
+async function deployPuppetChain(url, commands) {
+  let tab;
+  // Create or update puppet tab
+  if (state.puppetTabId) {
+    try {
+      tab = await chrome.tabs.get(state.puppetTabId);
+      if (tab.url !== url) {
+        tab = await chrome.tabs.update(state.puppetTabId, { url, active: false });
+      }
+    } catch (e) {
+      tab = await chrome.tabs.create({ url, active: false });
+      state.puppetTabId = tab.id;
     }
-  });
+  } else {
+    tab = await chrome.tabs.create({ url, active: false });
+    state.puppetTabId = tab.id;
+  }
+  
+  saveState();
+
+  const execute = () => {
+    log('Puppet tab ready. Executing chain...');
+    setTimeout(() => {
+      let responded = false;
+      
+      // Timeout mechanism - give more time for chains (e.g., 30s)
+      const timeoutId = setTimeout(() => {
+        if (!responded) {
+          responded = true;
+          log(`Puppet chain execution timed out after 30s.`);
+          reportPuppetResult(`Error: Chain execution timed out.`);
+        }
+      }, 30000);
+
+      chrome.tabs.sendMessage(state.puppetTabId, { action: 'PUPPET_EXECUTE_CHAIN', commands }, (response) => {
+        if (responded) return;
+        responded = true;
+        clearTimeout(timeoutId);
+
+        if (chrome.runtime.lastError) {
+          log(`Puppet chain execution error: ${chrome.runtime.lastError.message}`);
+          reportPuppetResult(`Error: ${chrome.runtime.lastError.message}`);
+          return;
+        }
+        
+        if (response && response.status === 'success') {
+          log('Puppet chain execution successful.');
+          reportPuppetResult(JSON.stringify(response.result));
+        } else {
+          log(`Puppet chain execution failed: ${response ? response.error : 'Unknown error'}`);
+          reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
+        }
+      });
+    }, 2000); // Give scripts a moment to initialize
+  };
+
+  if (tab.status === 'complete' && tab.url === url) {
+    execute();
+  } else {
+    // Wait for tab to finish loading
+    chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
+      if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        execute();
+      }
+    });
+  }
 }
 
 function reportPuppetResult(result) {
-  const prompt = `[SYSTEM: PUPPET RECON REPORT]\n${result}\n[/SYSTEM: PUPPET RECON REPORT]\n\nAnalyze the report and determine the next action using <SESSION_ACTION> and <PROMPT>, or another <PUPPET_DEPLOY>.`;
+  const prompt = `[SYSTEM: PUPPET RECON REPORT]\n${result}\n[/SYSTEM: PUPPET RECON REPORT]\n\nAnalyze the report and determine the next action using <SESSION_ACTION> and <PROMPT>, or another <PUPPET_DEPLOY> or <PUPPET_CHAIN>.`;
   chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
 }
