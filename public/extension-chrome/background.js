@@ -35,8 +35,14 @@ function log(message) {
   saveState();
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Debounce state saving to reduce storage I/O during rapid logging
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 100);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
