@@ -23,12 +23,13 @@ export default function App() {
     ];
 
     try {
-      for (const file of files) {
+      // Parallelize fetching to significantly speed up ZIP generation
+      await Promise.all(files.map(async (file) => {
         const response = await fetch(`/extension-chrome/${file}`);
         if (!response.ok) throw new Error(`Failed to fetch ${file}`);
         const content = await response.text();
         zip.file(file, content);
-      }
+      }));
 
       const content = await zip.generateAsync({ type: 'blob' });
       saveAs(content, `omnipotent-ai-orchestrator-v6-chrome.zip`);

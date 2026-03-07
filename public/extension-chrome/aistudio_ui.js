@@ -70,6 +70,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastLogCount = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -86,13 +88,26 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Incremental Log Rendering: Only append new logs to avoid O(N^2) DOM operations
+    if (state.logs) {
+      if (state.logs.length < lastLogCount) {
+        // Handle state reset
+        logsDiv.innerHTML = '';
+        lastLogCount = 0;
+      }
+
+      if (state.logs.length > lastLogCount) {
+        const newLogs = state.logs.slice(lastLogCount);
+        newLogs.forEach(l => {
+          const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+          entry.innerHTML = `<span class="oo-log-time">${time}</span> ${l}`;
+          logsDiv.appendChild(entry);
+        });
+        lastLogCount = state.logs.length;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
