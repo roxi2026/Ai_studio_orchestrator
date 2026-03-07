@@ -10,6 +10,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+function highlightElement(el) {
+  if (!el || !el.style) return;
+  const oldOutline = el.style.outline;
+  const oldTransition = el.style.transition;
+  const oldBoxShadow = el.style.boxShadow;
+  
+  el.style.transition = 'all 0.3s ease-in-out';
+  el.style.outline = '3px solid #10b981';
+  el.style.boxShadow = '0 0 15px rgba(16, 185, 129, 0.8)';
+  
+  setTimeout(() => {
+    el.style.outline = oldOutline;
+    el.style.boxShadow = oldBoxShadow;
+    el.style.transition = oldTransition;
+  }, 1500);
+}
+
 async function handleDomAction(cmd) {
   if (cmd.type === 'EVALUATE') {
     // Unsafe but powerful for an autonomous agent
@@ -19,6 +36,11 @@ async function handleDomAction(cmd) {
   const el = findElement(cmd.selector);
   if (!el && cmd.type !== 'EVALUATE') {
     throw new Error(`Element not found: ${cmd.selector}`);
+  }
+  
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    highlightElement(el);
   }
   
   if (cmd.type === 'CLICK') {

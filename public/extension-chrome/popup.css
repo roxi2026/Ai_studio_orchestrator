@@ -1,0 +1,15 @@
+body { font-family: 'Inter', sans-serif; width: 340px; margin: 0; padding: 16px; background: #f8f9fa; color: #202124; }
+.container { display: flex; flex-direction: column; gap: 12px; }
+h2 { margin: 0; font-size: 18px; font-weight: 600; color: #1a73e8; }
+h3 { margin: 12px 0 4px 0; font-size: 13px; font-weight: 600; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; }
+textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #dadce0; border-radius: 6px; font-family: inherit; font-size: 13px; resize: vertical; }
+.actions { display: flex; gap: 8px; }
+button { flex: 1; padding: 8px 16px; background: #1a73e8; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: 0.2s; }
+button:hover { background: #1557b0; }
+button.danger { background: #ea4335; }
+button.danger:hover { background: #c5221f; }
+.status-badge { display: inline-block; padding: 4px 8px; background: #e8f0fe; color: #1967d2; border-radius: 4px; font-size: 12px; font-weight: 600; align-self: flex-start; }
+#log, #memory { font-size: 11px; color: #3c4043; max-height: 120px; overflow-y: auto; background: #fff; padding: 8px; border: 1px solid #dadce0; border-radius: 6px; font-family: 'JetBrains Mono', monospace; }
+#memory { max-height: 80px; }
+.memory-item { margin-bottom: 4px; border-bottom: 1px solid #f1f3f4; padding-bottom: 4px; }
+.memory-key { font-weight: bold; color: #1a73e8; }

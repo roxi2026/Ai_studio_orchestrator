@@ -19,12 +19,15 @@ chrome.runtime.onInstalled.addListener(setupOffscreenDocument);
 
 // --- State Management ---
 let state = {
-  status: 'Idle',
+  status: 'Idle', // Idle, Planning, Executing, Completed, Error
   goal: '',
-  logs: [],
+  plan: [],
+  currentStepIndex: 0,
   memory: {},
+  logs: [],
   brainTabId: null,
-  targetTabId: null
+  targetTabId: null,
+  pendingPrompt: null
 };
 
 function log(message) {
@@ -42,12 +45,36 @@ chrome.storage.local.get(['orchestratorState'], (result) => {
   if (result.orchestratorState) state = result.orchestratorState;
 });
 
+// --- Auto-Activation & Session Handoff ---
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && tab.url.includes('aistudio.google.com')) {
+    state.brainTabId = tabId;
+    saveState();
+    
+    // Auto-activate the in-page UI
+    chrome.tabs.sendMessage(tabId, { action: 'AUTO_ACTIVATE', state });
+
+    // Handle Session Handoff Injection
+    if (state.pendingPrompt) {
+      const prompt = state.pendingPrompt;
+      state.pendingPrompt = null;
+      saveState();
+      
+      log('Session handoff complete. Injecting prompt in 3 seconds...');
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, { action: 'SEND_PROMPT', text: prompt });
+      }, 3000); // Wait for React to mount chat interface
+    }
+  }
+});
+
 // --- Orchestration Engine ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'KEEPALIVE') return;
   if (message.action === 'START_ORCHESTRATION') startOrchestration(message.goal);
   if (message.action === 'STOP_ORCHESTRATION') {
     state.status = 'Idle';
+    state.pendingPrompt = null;
     log('Orchestration stopped by user.');
     saveState();
   }
@@ -56,14 +83,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function startOrchestration(goal) {
   state.goal = goal;
-  state.status = 'Running';
-  state.logs = [];
+  state.status = 'Planning';
+  state.plan = [];
+  state.currentStepIndex = 0;
   state.memory = {};
-  log('Starting universal orchestration...');
+  state.logs = [];
+  log('Phase 1: Meta-Planning initialized...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
   if (tabs.length === 0) {
-    log('Error: AI Studio tab not found. Please open https://aistudio.google.com/');
+    log('Error: AI Studio tab not found.');
     state.status = 'Error';
     saveState();
     return;
@@ -71,10 +100,36 @@ async function startOrchestration(goal) {
   
   state.brainTabId = tabs[0].id;
   
-  const prompt = `You are an Omnipotent Web Agent. Your goal is: ${goal}.
-You control a browser. Output a JSON object wrapped in <ACTION> tags to take action.
-Wait for the System Result before outputting the next action.
+  const prompt = `You are an Omnipotent Web Agent Planner.
+User Goal: ${goal}
+Create a step-by-step execution plan to achieve this goal.
+Output ONLY a JSON array of steps wrapped in <PLAN> tags.
+Each step must have a "description".
+Example:
+<PLAN>
+[
+  {"description": "Navigate to Wikipedia and search for Quantum Computing"},
+  {"description": "Read the first paragraph and STORE it in memory"}
+]
+</PLAN>`;
+  
+  state.pendingPrompt = prompt;
+  saveState();
+  
+  // Trigger fresh session for planning
+  chrome.tabs.update(state.brainTabId, { url: 'https://aistudio.google.com/app/prompts/new_chat' });
+}
 
+function executeCurrentStep() {
+  const step = state.plan[state.currentStepIndex];
+  log(`Phase 2: Handoff to new session for Step ${state.currentStepIndex + 1}: ${step.description}`);
+
+  const prompt = `You are an Omnipotent Web Agent Executor.
+Overall Goal: ${state.goal}
+Current Step: ${step.description}
+Memory from previous steps: ${JSON.stringify(state.memory)}
+
+Output a JSON object wrapped in <ACTION> tags to interact with the browser.
 Available actions:
 {"type": "NAVIGATE", "url": "https://..."}
 {"type": "CLICK", "selector": "css or xpath"}
@@ -82,81 +137,109 @@ Available actions:
 {"type": "READ", "selector": "css or xpath"}
 {"type": "EVALUATE", "script": "javascript code"}
 {"type": "STORE", "key": "key", "value": "data"}
-{"type": "DONE", "result": "final output"}
+{"type": "STEP_DONE", "message": "summary of what was done"}
 
-Example:
-<ACTION>
-{"type": "NAVIGATE", "url": "https://en.wikipedia.org"}
-</ACTION>
+Wait for System Result after each <ACTION>. When the step is complete, output <ACTION>{"type": "STEP_DONE", "message": "..."}</ACTION>.`;
 
-Begin.`;
+  state.pendingPrompt = prompt;
+  saveState();
   
-  chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
+  // Trigger session handoff to clear context and avoid rate limits
+  chrome.tabs.update(state.brainTabId, { url: 'https://aistudio.google.com/app/prompts/new_chat' });
 }
 
 async function handleModelOutput(text) {
-  if (state.status !== 'Running') return;
-  log('Received model output. Parsing...');
-  
-  const match = text.match(/<ACTION>([\s\S]*?)<\/ACTION>/);
-  if (!match) {
-    log('No action found. Prompting model to continue.');
-    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System: No <ACTION> tag found. Please provide your next action.' });
+  if (state.status === 'Planning') {
+    const match = text.match(/<PLAN>([\s\S]*?)<\/PLAN>/);
+    if (match) {
+      try {
+        state.plan = JSON.parse(match[1].trim());
+        state.status = 'Executing';
+        log(`Plan created with ${state.plan.length} steps. Starting execution...`);
+        saveState();
+        executeCurrentStep();
+      } catch (e) {
+        log('Failed to parse plan JSON. Retrying...');
+        chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System Error: Invalid JSON in <PLAN>. Please output valid JSON array.' });
+      }
+    } else {
+       chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System Error: No <PLAN> tags found. Please output the plan.' });
+    }
     return;
   }
-  
-  try {
-    const action = JSON.parse(match[1].trim());
-    log(`Executing: ${action.type}`);
-    
-    if (action.type === 'DONE') {
-      state.status = 'Completed';
-      log(`Workflow finished: ${action.result}`);
-      saveState();
+
+  if (state.status === 'Executing') {
+    const match = text.match(/<ACTION>([\s\S]*?)<\/ACTION>/);
+    if (!match) {
+      log('No action found. Prompting model to continue.');
+      chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System: No <ACTION> tag found. Please provide your next action.' });
       return;
     }
     
-    if (action.type === 'STORE') {
-      state.memory[action.key] = action.value;
-      saveState();
-      chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: Stored ${action.key} in memory.` });
-      return;
-    }
-    
-    if (action.type === 'NAVIGATE') {
-      if (state.targetTabId) {
-        chrome.tabs.update(state.targetTabId, { url: action.url }, (tab) => {
+    try {
+      const action = JSON.parse(match[1].trim());
+      log(`Executing: ${action.type}`);
+      
+      if (action.type === 'STEP_DONE') {
+        log(`Step ${state.currentStepIndex + 1} completed: ${action.message}`);
+        state.currentStepIndex++;
+        saveState();
+        
+        if (state.currentStepIndex >= state.plan.length) {
+          state.status = 'Completed';
+          log('All steps completed successfully!');
+          saveState();
+        } else {
+          log('Rate limit buffer: waiting 5 seconds before next session handoff...');
           setTimeout(() => {
-            chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: Navigated to ${action.url}` });
-          }, 3000); // Wait for page load
-        });
-      } else {
-        chrome.tabs.create({ url: action.url, active: false }, (tab) => {
-          state.targetTabId = tab.id;
-          setTimeout(() => {
-            chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: Opened new tab and navigated to ${action.url}` });
-          }, 3000);
-        });
+            executeCurrentStep();
+          }, 5000);
+        }
+        return;
       }
-      return;
-    }
-    
-    // DOM Actions
-    if (!state.targetTabId) {
-      chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Error: No target tab open. Use NAVIGATE first.` });
-      return;
-    }
-    
-    chrome.tabs.sendMessage(state.targetTabId, { action: 'EXECUTE_DOM', cmd: action }, (response) => {
-      if (chrome.runtime.lastError) {
-         chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Error: ${chrome.runtime.lastError.message}` });
-      } else {
-         chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: ${response.result}` });
+      
+      if (action.type === 'STORE') {
+        state.memory[action.key] = action.value;
+        saveState();
+        chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: Stored ${action.key} in memory.` });
+        return;
       }
-    });
-    
-  } catch (e) {
-    log(`Parse/Execution error: ${e.message}`);
-    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Error: Invalid JSON or execution failed. ${e.message}` });
+      
+      if (action.type === 'NAVIGATE') {
+        if (state.targetTabId) {
+          chrome.tabs.update(state.targetTabId, { url: action.url }, (tab) => {
+            setTimeout(() => {
+              chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: Navigated to ${action.url}` });
+            }, 3000); // Wait for page load
+          });
+        } else {
+          chrome.tabs.create({ url: action.url, active: false }, (tab) => {
+            state.targetTabId = tab.id;
+            setTimeout(() => {
+              chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: Opened new tab and navigated to ${action.url}` });
+            }, 3000);
+          });
+        }
+        return;
+      }
+      
+      // DOM Actions
+      if (!state.targetTabId) {
+        chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Error: No target tab open. Use NAVIGATE first.` });
+        return;
+      }
+      
+      chrome.tabs.sendMessage(state.targetTabId, { action: 'EXECUTE_DOM', cmd: action }, (response) => {
+        if (chrome.runtime.lastError) {
+           chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Error: ${chrome.runtime.lastError.message}` });
+        } else {
+           chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Result: ${response.result}` });
+        }
+      });
+      
+    } catch (e) {
+      log(`Parse/Execution error: ${e.message}`);
+      chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: `System Error: Invalid JSON or execution failed. ${e.message}` });
+    }
   }
 }

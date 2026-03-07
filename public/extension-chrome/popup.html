@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Omnipotent Orchestrator</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h2>Omnipotent Agent</h2>
+    <textarea id="goalInput" rows="3" placeholder="E.g., Go to Wikipedia, search for Quantum Computing, and summarize the first paragraph..."></textarea>
+    <div class="actions">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" class="danger">Stop</button>
+    </div>
+    <div id="status" class="status-badge">Idle</div>
+    
+    <h3>Memory</h3>
+    <div id="memory"></div>
+    
+    <h3>Execution Logs</h3>
+    <div id="log"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

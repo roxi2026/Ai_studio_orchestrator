@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Omnipotent AI Orchestrator",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "Transforms Google AI Studio into a universal, autonomous web agent capable of controlling any website.",
   "permissions": [
     "storage",
@@ -24,8 +24,9 @@
   "content_scripts": [
     {
       "matches": ["https://aistudio.google.com/*"],
-      "js": ["aistudio_content.js"],
-      "run_at": "document_start"
+      "js": ["aistudio_content.js", "aistudio_ui.js"],
+      "css": ["aistudio_ui.css"],
+      "run_at": "document_idle"
     },
     {
       "matches": ["<all_urls>"],

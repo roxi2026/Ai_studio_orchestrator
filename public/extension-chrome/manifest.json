@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Omnipotent AI Orchestrator",
+  "version": "6.0.0",
+  "description": "Central Command (CC) & Puppet Agency for Google AI Studio.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "offscreen",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://aistudio.google.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://aistudio.google.com/*"],
+      "js": ["aistudio_content.js", "aistudio_ui.js"],
+      "css": ["aistudio_ui.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "exclude_matches": ["https://aistudio.google.com/*"],
+      "js": ["puppet_content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["https://aistudio.google.com/*"]
+    }
+  ]
+}
