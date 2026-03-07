@@ -1,0 +1,5 @@
+{
+  "name": "AI Studio Orchestrator",
+  "description": "An autonomous Google AI Studio orchestration extension.",
+  "requestFramePermissions": []
+}
