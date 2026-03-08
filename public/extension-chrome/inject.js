@@ -29,6 +29,19 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // --- Helper to determine if a URL is relevant to AI Studio's model communication ---
+  function isRelevantUrl(url) {
+    if (!url) return false;
+    // Target specific AI Studio endpoints to avoid overhead on every network request
+    const relevantPatterns = [
+      'generateContent',
+      'v1beta/models',
+      'executor',
+      'reviewer'
+    ];
+    return relevantPatterns.some(pattern => url.includes(pattern));
+  }
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,6 +49,8 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      if (!isRelevantUrl(xhr.responseURL)) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
@@ -59,13 +74,16 @@
   
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
-    
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+
+    if (!isRelevantUrl(url)) return response;
+
+    // Performance Optimization: Only clone and read relevant model-related responses
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script

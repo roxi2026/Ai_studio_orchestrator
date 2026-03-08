@@ -108,21 +108,51 @@
   // Listen for state changes
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      // Performance Optimization: Only update non-log elements from storage
+      // Logs are handled incrementally via direct messaging
+      const newState = changes.orchestratorState.newValue;
+      statusText.textContent = newState.status;
+      statusDot.className = 'oo-status-dot';
+
+      if (newState.status === 'Running') {
+        statusDot.classList.add('active');
+      } else if (newState.status === 'Error') {
+        statusDot.classList.add('error');
+      }
+
+      if (newState.goal && !goalInput.value) {
+        goalInput.value = newState.goal;
+      }
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate and incremental logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('System', 'Auto-activated upon entering AI Studio.');
+    } else if (msg.action === 'LOG_EVENT') {
+      // Performance Optimization: Incremental log appending
+      appendLog(msg.timestamp, msg.message);
     }
   });
+
+  function appendLog(time, message) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    entry.innerHTML = `<span class="oo-log-time">${time}</span> ${message}`;
+    logsDiv.appendChild(entry);
+
+    // Keep only last 50 logs in DOM
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
 
   // Actions
   startBtn.addEventListener('click', () => {
