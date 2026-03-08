@@ -678,68 +678,59 @@ async function executePuppetCommand(commandStr) {
         }
       }
 
-      // 2. Clean Document Clone for Article Extraction
-      const clone = document.body.cloneNode(true);
+      // 2. Performance Optimized Article Extraction (Avoid full body cloning)
+      // Instead of cloning the whole body, we selectively find candidates first
+      const candidateSelectors = 'article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section';
+      const candidateElements = Array.from(document.querySelectorAll(candidateSelectors));
       
-      // Default distraction selectors
+      // If no semantic candidates, fall back to high-level divs
+      const elementsToScore = candidateElements.length > 0 ? candidateElements : Array.from(document.querySelectorAll('body > div, body > section'));
+      
+      let bestEl = null;
+      let maxScore = -1;
+
+      elementsToScore.forEach(el => {
+        // Skip hidden or tiny elements early
+        if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
+
+        const text = el.innerText || '';
+        const textLen = text.trim().length;
+        if (textLen < 150) return;
+
+        const links = el.querySelectorAll('a');
+        let linkTextLen = 0;
+        links.forEach(a => linkTextLen += (a.innerText || '').length);
+        const linkDensity = linkTextLen / (textLen || 1);
+        if (linkDensity > 0.5) return; // High link density is likely a nav or footer
+
+        const pCount = el.querySelectorAll('p').length;
+        const score = textLen * (1 - linkDensity) + (pCount * 50);
+
+        if (score > maxScore) {
+          maxScore = score;
+          bestEl = el;
+        }
+      });
+
+      if (!bestEl) bestEl = document.body;
+
+      // 3. Selective Cleaning (only on the best candidate)
+      const clone = bestEl.cloneNode(true);
       const defaultExcludes = [
-        'nav', 'footer', 'aside', 'header',
-        '.ad', '.ads', '.advertisement', '.ad-container', '.ad-slot',
-        '[class*="sponsor"]', '[id*="sponsor"]', '[class*="ad-"]', '[id*="ad-"]',
+        'nav', 'footer', 'aside', 'header', '.ad', '.ads', '.advertisement',
         '.social-share', '.share-buttons', '.newsletter', '.subscribe',
-        'style', 'script', 'noscript', 'iframe', 'svg', 'form',
-        '[role="banner"]', '[role="navigation"]', '[role="contentinfo"]'
+        'style', 'script', 'noscript', 'iframe', 'svg', 'form'
       ];
-      
       const allExcludes = [...defaultExcludes, ...(config.excludeSelectors || [])];
       
       allExcludes.forEach(selector => {
         try {
-          const elements = clone.querySelectorAll(selector);
-          elements.forEach(el => el.remove());
-        } catch (e) {
-          // Ignore invalid selectors
-        }
+          clone.querySelectorAll(selector).forEach(e => e.remove());
+        } catch (e) {}
       });
 
-      // 3. Resilient Article Heuristic
-      let bestEl = clone;
-      let maxScore = -1;
-      
-      // Look for semantic article containers first
-      const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
-      const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
-      
-      elementsToScore.forEach(el => {
-        const text = el.textContent || '';
-        const textLen = text.trim().length;
-        if (textLen < 100) return; // Skip too short containers
-        
-        const links = el.querySelectorAll('a');
-        let linkTextLen = 0;
-        links.forEach(a => linkTextLen += (a.textContent || '').length);
-        
-        const linkDensity = linkTextLen / (textLen || 1);
-        
-        // Paragraph count bonus
-        const pCount = el.querySelectorAll('p').length;
-        
-        // Score: text length, penalize high link density, reward paragraphs
-        const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
-        
-        // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
-        const sizeRatio = textLen / (bodyLen || 1);
-        const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
-        
-        if (finalScore > maxScore) {
-          maxScore = finalScore;
-          bestEl = el;
-        }
-      });
-      
       // Clean up the extracted text (remove excessive whitespace)
-      const rawText = bestEl.textContent || '';
+      const rawText = clone.innerText || '';
       const cleanText = rawText.replace(/\n\s*\n/g, '\n\n').replace(/ +/g, ' ').trim();
 
       return { 
