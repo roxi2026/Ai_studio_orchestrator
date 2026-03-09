@@ -32,11 +32,35 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Optimization: Send a direct message for the log event to allow incremental UI updates
+  // This bypasses the need for the UI to wait for storage synchronization and full re-renders.
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      message,
+      time: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+    }).catch(() => { /* Ignore if tab is not ready */ });
+  }
+
   saveState();
 }
 
-function saveState() {
+// Optimization: Debounce storage writes to reduce IPC overhead
+function debounce(func, timeout = 500) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { func.apply(this, args); }, timeout);
+  };
+}
+
+const debouncedSave = debounce(() => {
   chrome.storage.local.set({ orchestratorState: state });
+}, 500);
+
+function saveState() {
+  debouncedSave();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
