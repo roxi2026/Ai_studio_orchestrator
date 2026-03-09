@@ -112,14 +112,34 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate and incremental logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+      entry.innerHTML = `<span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.`;
+      logsDiv.appendChild(entry);
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      // Optimization: Incrementally append the log entry to the DOM
+      // This is much faster than re-rendering the entire list using innerHTML.
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+      entry.innerHTML = `<span class="oo-log-time">${msg.time}</span> ${msg.message}`;
+      logsDiv.appendChild(entry);
+
+      // Keep only the last 50 logs in the DOM
+      if (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
+
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });
