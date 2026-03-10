@@ -33,10 +33,22 @@ function log(message) {
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+
+  // ⚡ Optimization: Broadcast log event for immediate incremental UI update
+  // this avoids waiting for storage sync and full UI re-renders
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'LOG_EVENT', message });
+  }
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // ⚡ Optimization: Debounce storage writes to reduce disk I/O
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
