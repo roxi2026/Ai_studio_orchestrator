@@ -36,6 +36,9 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      // ⚡ Optimization: Only process AI Studio generation responses
+      if (!xhr.responseURL.includes('generateContent') && !xhr.responseURL.includes('v1beta')) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
@@ -59,23 +62,27 @@
   
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
-    
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+
+    // ⚡ Optimization: Filter network interception to only process relevant AI Studio traffic
+    // prevents unnecessary cloning and memory overhead for irrelevant requests
+    if (url.includes('generateContent') || url.includes('v1beta/models')) {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        // Determine which pane this fetch belongs to based on request URL or payload
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      });
+    }
     
     return response;
   };
