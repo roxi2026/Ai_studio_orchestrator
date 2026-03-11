@@ -32,11 +32,25 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Optimization: Send direct message for incremental UI updates
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'LOG_EVENT', message }).catch(() => {
+      // Ignore errors if tab is not ready
+    });
+  }
+
   saveState();
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Optimization: Debounce storage writes to reduce I/O and quota usage
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
