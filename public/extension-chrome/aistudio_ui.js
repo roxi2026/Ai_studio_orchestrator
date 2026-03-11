@@ -74,6 +74,22 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  function appendLog(message) {
+    const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    entry.innerHTML = `<span class="oo-log-time">${time}</span> ${message}`;
+
+    logsDiv.appendChild(entry);
+
+    // Keep only last 50 entries
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,12 +106,20 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
+    // Optimization: Skip expensive innerHTML log re-renders if logs are already up to date
+    // or if the update is just adding a new log (handled by LOG_EVENT).
+    // Initial load still needs to render logs.
+    if (state.logs && state.logs.length > 0 && logsDiv.children.length <= 1) {
+      const fragment = document.createDocumentFragment();
+      state.logs.forEach(l => {
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
+        entry.innerHTML = `<span class="oo-log-time">${time}</span> ${l}`;
+        fragment.appendChild(entry);
+      });
+      logsDiv.innerHTML = ''; // Clear "ready" message
+      logsDiv.appendChild(fragment);
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
@@ -117,10 +141,11 @@
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.message);
     }
   });
 
@@ -141,8 +166,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog('Memory cleared.');
   });
 
   // Auto-activate on load
