@@ -28,15 +28,30 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+function saveState() {
+  // Debounce storage writes to 500ms to reduce I/O overhead
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Direct message passing for incremental UI updates (avoids full state broadcast)
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      message: message,
+      timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+    }).catch(() => {/* Ignore if tab closed */});
+  }
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -69,6 +84,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // --- Central Command (CC) Engine ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'KEEPALIVE') return;
+
+  // Robustly capture brainTabId from any message coming from AI Studio
+  if (sender.tab && sender.tab.url && sender.tab.url.includes('aistudio.google.com')) {
+    if (state.brainTabId !== sender.tab.id) {
+      state.brainTabId = sender.tab.id;
+      saveState();
+    }
+  }
+
   if (message.action === 'START_ORCHESTRATION') startOrchestration(message.goal);
   if (message.action === 'STOP_ORCHESTRATION') {
     state.status = 'Idle';
