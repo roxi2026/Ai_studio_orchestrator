@@ -74,7 +74,29 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
-  function updateUI(state) {
+  function appendLog(message, time) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    const timestamp = time || new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = timestamp;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${message}`));
+
+    logsDiv.appendChild(entry);
+
+    // Keep only last 50 entries in DOM for performance
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
+  function updateUI(state, fullSync = false) {
     if (!state) return;
     
     statusText.textContent = state.status;
@@ -91,24 +113,43 @@
     }
 
     // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // We only perform a full re-render if:
+    // 1. It's an explicit full sync (e.g., initial load)
+    // 2. The DOM is empty
+    // 3. The storage state has significantly more logs than our current DOM (fallback mechanism)
+    const currentLogCount = logsDiv.querySelectorAll('.oo-log-entry').length;
+    const storedLogCount = state.logs ? state.logs.length : 0;
+    const needsFallbackSync = storedLogCount > currentLogCount + 5;
+
+    if (fullSync || currentLogCount === 0 || needsFallbackSync) {
+      logsDiv.innerHTML = '';
+      if (state.logs && state.logs.length > 0) {
+        const fragment = document.createDocumentFragment();
+        // Take only the last 50 logs if the state has more
+        const logsToRender = state.logs.slice(-50);
+        logsToRender.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+          const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+          entry.innerHTML = `<span class="oo-log-time">${time}</span> ${l}`;
+          fragment.appendChild(entry);
+        });
+        logsDiv.appendChild(fragment);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
   // Fetch initial state
   chrome.storage.local.get(['orchestratorState'], (res) => {
-    if (res.orchestratorState) updateUI(res.orchestratorState);
+    if (res.orchestratorState) updateUI(res.orchestratorState, true);
   });
 
   // Listen for state changes
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      // Perform UI update without forcing full log re-render unless necessary
+      updateUI(changes.orchestratorState.newValue, false);
     }
   });
 
@@ -116,11 +157,10 @@
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
-      if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      if (msg.state) updateUI(msg.state, true);
+      appendLog('Auto-activated upon entering AI Studio.', 'System');
+    } else if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.message, msg.timestamp);
     }
   });
 
