@@ -28,15 +28,38 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
+
+  // [PERF] Debounced storage write to reduce Disk I/O
+  saveStateDebounced();
+
+  // [PERF] Direct message passing for incremental UI updates (bypasses storage latency)
+  broadcastLog(message);
+}
+
+function saveStateDebounced() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  saveStateDebounced();
+}
+
+function broadcastLog(message) {
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'LOG_EVENT', message }).catch(() => {
+      // Ignore errors if tab is closed or script not yet injected
+    });
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
