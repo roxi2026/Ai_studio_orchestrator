@@ -32,11 +32,22 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Direct low-latency broadcast to UI
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { type: 'LOG_EVENT', message }).catch(() => {});
+  }
+
   saveState();
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce to reduce storage I/O
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -50,7 +61,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     saveState();
     
     // Auto-activate the in-page UI
-    chrome.tabs.sendMessage(tabId, { action: 'AUTO_ACTIVATE', state });
+    chrome.tabs.sendMessage(tabId, { action: 'AUTO_ACTIVATE', state }).catch(() => {});
 
     // Handle Session Handoff Injection
     if (state.pendingPrompt) {
@@ -68,6 +79,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // --- Central Command (CC) Engine ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Robustly capture brainTabId from sender
+  if (sender.tab && sender.tab.url && sender.tab.url.includes('aistudio.google.com')) {
+    state.brainTabId = sender.tab.id;
+  }
+
   if (message.type === 'KEEPALIVE') return;
   if (message.action === 'START_ORCHESTRATION') startOrchestration(message.goal);
   if (message.action === 'STOP_ORCHESTRATION') {
