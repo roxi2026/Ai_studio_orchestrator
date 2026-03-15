@@ -28,15 +28,31 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+function saveState() {
+  // Optimization: Debounce storage writes to reduce disk I/O
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Optimization: Send direct message for real-time incremental UI updates
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      message: message,
+      timestamp: Date.now()
+    }).catch(() => {
+      // Ignore errors if tab is not ready
+    });
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
