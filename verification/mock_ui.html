@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Extension UI Mock</title>
+    <link rel="stylesheet" href="../public/extension-chrome/aistudio_ui.css">
+    <style>
+        body { background: #f0f0f0; height: 100vh; margin: 0; }
+    </style>
+</head>
+<body>
+    <script>
+        // Mock Chrome APIs
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, cb) => {
+                        cb({ orchestratorState: { status: 'Idle', logs: ['Initial log from storage'], goal: 'Test Goal' } });
+                    }
+                },
+                onChanged: {
+                    addListener: (cb) => { window.storageChangeListener = cb; }
+                }
+            },
+            runtime: {
+                onMessage: {
+                    addListener: (cb) => { window.runtimeMessageListener = cb; }
+                },
+                sendMessage: (msg) => { console.log('Message sent to background:', msg); },
+                getURL: (path) => path
+            }
+        };
+    </script>
+    <script src="../public/extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>

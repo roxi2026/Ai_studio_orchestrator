@@ -28,15 +28,31 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce storage writes to reduce I/O overhead
+}
+
 function log(message) {
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Direct message passing for real-time UI updates (low overhead)
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      log: message,
+      time: time
+    }).catch(() => {});
+  }
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
