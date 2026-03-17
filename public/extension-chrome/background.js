@@ -28,15 +28,39 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+/**
+ * Optimizes performance by debouncing storage writes.
+ * Prevents rapid disk I/O during heavy logging or state transitions.
+ */
+let saveTimeout;
+function saveState() {
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Optimized logging system that uses direct message passing for UI updates
+ * instead of relying on expensive storage-to-UI synchronization.
+ */
+function log(message) {
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const logEntry = `[${timestamp}] ${message}`;
+
+  console.log(`[CC] ${message}`);
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  // Direct UI update broadcast for lower latency and less CPU overhead
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      entry: logEntry
+    }).catch(() => {/* UI might not be ready */});
+  }
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
