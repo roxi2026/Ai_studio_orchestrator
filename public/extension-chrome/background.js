@@ -28,15 +28,33 @@ let state = {
   pendingPrompt: null
 };
 
+let saveStateDebounceTimer = null;
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Performance: Direct message passing for real-time incremental UI updates
+  // avoiding the overhead/latency of storage roundtrips for every log entry.
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      log: message,
+      timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+    }).catch(() => { /* Tab might be closed or not ready */ });
+  }
+
   saveState();
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Performance: 500ms debounce to batch storage writes during high-frequency orchestration events.
+  if (saveStateDebounceTimer) clearTimeout(saveStateDebounceTimer);
+  saveStateDebounceTimer = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateDebounceTimer = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
