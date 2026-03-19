@@ -28,15 +28,32 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+function saveState() {
+  // 500ms debounce for storage writes to reduce disk I/O and CPU overhead
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Performance: Send direct LOG_EVENT to UI for low-latency incremental updates
+  // bypassing the relatively slow chrome.storage observer for better UX.
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      message,
+      timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+    }).catch(() => {}); // Ignore errors if tab is not ready
+  }
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {

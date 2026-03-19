@@ -3,25 +3,34 @@
 (function() {
   console.log('[CC] Main world script injected. Intercepting network requests...');
 
+  // Performance: URL filtering to only process relevant AI Studio requests.
+  // This drastically reduces CPU and memory overhead by avoiding cloning/parsing
+  // of unrelated assets (images, analytics, etc.)
+  const AI_STUDIO_PATTERNS = ['generateContent', 'v1beta/models', 'executor', 'reviewer'];
+  function isAIStudioRequest(url) {
+    const urlStr = String(url);
+    return AI_STUDIO_PATTERNS.some(pattern => urlStr.includes(pattern));
+  }
+
   // --- WebSocket Interception ---
   const OriginalWebSocket = window.WebSocket;
   
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
     
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
-    const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-    
-    ws.addEventListener('message', function(event) {
-      // Forward the intercepted message to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'WS_MESSAGE',
-        pane: pane,
-        payload: event.data
-      }, '*');
-    });
+    // Performance: Only intercept WebSockets related to orchestration
+    if (isAIStudioRequest(url)) {
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+      ws.addEventListener('message', function(event) {
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'WS_MESSAGE',
+          pane: pane,
+          payload: event.data
+        }, '*');
+      });
+    }
     
     return ws;
   };
@@ -34,18 +43,26 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+
+    // Overload open to capture the URL early for filtering
+    xhr.open = function(method, url) {
+      this._url = url;
+      return originalOpen.apply(this, arguments);
+    };
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'XHR_RESPONSE',
-        pane: pane,
-        payload: xhr.responseText
-      }, '*');
+      // Performance: Filter XHR responses to avoid unnecessary postMessage overhead
+      if (this._url && isAIStudioRequest(this._url)) {
+        const pane = this._url.includes('executor') ? 'executor' : (this._url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'XHR_RESPONSE',
+          pane: pane,
+          payload: xhr.responseText
+        }, '*');
+      }
     });
     
     return xhr;
@@ -58,24 +75,26 @@
   const originalFetch = window.fetch;
   
   window.fetch = async function(...args) {
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+    const urlStr = String(url); // Safe cast for URL objects
+    
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+    // Performance Optimization: Only clone and read text for AI Studio generation/model requests
+    // This avoids consuming memory for large blobs (like model downloads or images)
+    if (isAIStudioRequest(urlStr)) {
+      const clonedResponse = response.clone();
+      clonedResponse.text().then(text => {
+        const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      });
+    }
     
     return response;
   };
