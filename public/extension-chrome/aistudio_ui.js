@@ -73,6 +73,32 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  /**
+   * Appends a single log entry to the UI using incremental DOM updates.
+   * This is significantly more efficient than re-rendering the entire log list.
+   */
+  function appendLog(message) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' ' + message));
+
+    logsDiv.appendChild(entry);
+
+    // Prune old logs to prevent DOM bloat (keep last 50)
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    // Smooth scroll to bottom
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,12 +116,17 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
+    // Full render only if logs are vastly different or UI is empty (fallback/sync)
+    const currentLogCount = logsDiv.querySelectorAll('.oo-log-entry').length;
+    if (state.logs && state.logs.length > 0 && (currentLogCount === 0 || Math.abs(currentLogCount - state.logs.length) > 5)) {
+      logsDiv.innerHTML = '';
+      state.logs.forEach(l => {
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+        entry.innerHTML = `<span class="oo-log-time">${time}</span> ${l}`;
+        logsDiv.appendChild(entry);
+      });
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
@@ -105,22 +136,22 @@
     if (res.orchestratorState) updateUI(res.orchestratorState);
   });
 
-  // Listen for state changes
+  // Listen for state changes (throttled/debounced via background)
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    } else if (msg.action === 'LOG_EVENT') {
+      // High-performance real-time incremental update
+      appendLog(msg.message);
     }
   });
 

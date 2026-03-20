@@ -28,15 +28,37 @@ let state = {
   pendingPrompt: null
 };
 
+// Debounce storage writes to avoid performance bottlenecks during rapid state updates
+let saveTimeout = null;
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
+}
+
+/**
+ * Logs a message and broadcasts it to active AI Studio tabs for real-time incremental UI updates.
+ * This avoids expensive full re-renders triggered by storage sync.
+ */
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Persist state with debounce
+  saveState();
+
+  // Low-overhead real-time broadcast to active CC UI
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      message: message
+    }).catch(() => {
+      // Ignore errors if tab is not ready or closed
+    });
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
