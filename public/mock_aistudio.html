@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Mock AI Studio for Extension UI Verification</title>
+  <link rel="stylesheet" href="extension-chrome/aistudio_ui.css">
+  <style>
+    body { background: #1a1a1a; color: white; font-family: sans-serif; height: 100vh; margin: 0; }
+    #mock-controls { padding: 20px; border-bottom: 1px solid #333; }
+    button { padding: 8px 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="mock-controls">
+    <h1>Extension UI Mock</h1>
+    <button id="trigger-log">Trigger Incremental Log</button>
+    <button id="trigger-bulk-logs">Trigger Bulk Logs (Pruning Test)</button>
+  </div>
+
+  <script>
+    // Mock Chrome API
+    const listeners = {
+      storageChanged: [],
+      message: []
+    };
+
+    window.chrome = {
+      storage: {
+        local: {
+          get: (keys, cb) => {
+            cb({ orchestratorState: { status: 'Idle', logs: ['Initial log from storage'], goal: '' } });
+          }
+        },
+        onChanged: {
+          addListener: (cb) => listeners.storageChanged.push(cb)
+        }
+      },
+      runtime: {
+        onMessage: {
+          addListener: (cb) => listeners.message.push(cb)
+        },
+        sendMessage: (msg) => console.log('Message sent to background:', msg)
+      }
+    };
+
+    // Helper to simulate incoming messages
+    window.simulateMessage = (msg) => {
+      listeners.message.forEach(cb => cb(msg));
+    };
+  </script>
+
+  <!-- The extension script will inject itself here -->
+  <script src="extension-chrome/aistudio_ui.js"></script>
+
+  <script>
+    document.getElementById('trigger-log').onclick = () => {
+      window.simulateMessage({
+        action: 'LOG_EVENT',
+        log: 'New incremental log ' + new Date().getTime(),
+        timestamp: new Date().toLocaleTimeString()
+      });
+    };
+
+    document.getElementById('trigger-bulk-logs').onclick = () => {
+      for (let i = 0; i < 60; i++) {
+        window.simulateMessage({
+          action: 'LOG_EVENT',
+          log: 'Spam log ' + i,
+          timestamp: 'bulk'
+        });
+      }
+    };
+  </script>
+</body>
+</html>
