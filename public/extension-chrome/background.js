@@ -22,21 +22,41 @@ let state = {
   status: 'Idle', // Idle, Running, Completed, Error
   goal: '',
   memory: {},
-  logs: [],
+  logs: [{ text: 'Central Command (CC) ready and awaiting instructions.', time: 'System' }],
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+let saveTimeout = null;
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const logEntry = { text: message, time };
+
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
+
+  // Direct message for instant, low-overhead UI update
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'LOG_EVENT', log: logEntry }).catch(() => {
+      // Tab might be gone or not have listener yet, ignore
+    });
+  }
+
+  saveStateDebounced();
+}
+
+function saveStateDebounced() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(saveState, 500);
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  console.time('CC_SAVE_STATE');
+  chrome.storage.local.set({ orchestratorState: state }, () => {
+    console.timeEnd('CC_SAVE_STATE');
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,7 +98,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
-    log('Memory cleared by user.');
+    state.logs = [{ text: 'Memory cleared by user.', time: 'System' }];
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
@@ -96,6 +116,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  saveState(); // Immediate save for reset
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

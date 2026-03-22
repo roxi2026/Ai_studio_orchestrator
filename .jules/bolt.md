@@ -1,0 +1,3 @@
+## 2026-03-22 - Incremental UI and Debounced State in Chrome Extensions
+**Learning:** In high-frequency messaging environments (like browser extensions with logging), full re-renders via `innerHTML` and synchronous `chrome.storage` writes create measurable UI lag and can hit API quotas. Using `appendChild` + `createTextNode` for incremental updates and debouncing storage writes drastically improves responsiveness.
+**Action:** Always prefer granular DOM updates for live streams. Use a single source of truth for logs in the background script to avoid indexing mismatches between UI and state. Ensure fallback synchronization is robust against edge cases like list resets or large jumps.
