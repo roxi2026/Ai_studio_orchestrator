@@ -44,9 +44,7 @@
 
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
-          <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
-          </div>
+          <div id="oo-logs" class="oo-logs"></div>
         </div>
       </div>
       <div class="oo-status-bar">
@@ -74,8 +72,39 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  function appendLogEntry(log) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+
+    // Support both string logs and object logs with pre-calculated time
+    const text = typeof log === 'string' ? log : log.text;
+    const time = typeof log === 'string'
+      ? new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      : log.time;
+
+    timeSpan.textContent = time;
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' ' + text));
+
+    logsDiv.appendChild(entry);
+
+    // Limit DOM size to 50 entries
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
-    if (!state) return;
+    console.time('CC_UI_UPDATE');
+    if (!state) {
+      console.timeEnd('CC_UI_UPDATE');
+      return;
+    }
     
     statusText.textContent = state.status;
     statusDot.className = 'oo-status-dot';
@@ -90,14 +119,26 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental DOM update for logs
+    // Performance optimization: only re-render the whole list if out of sync (>5 logs diff)
+    // or if the list was cleared. Otherwise, just append new entries.
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentEntryCount = logsDiv.children.length;
+      const stateLogCount = state.logs.length;
+
+      if (currentEntryCount === 0 || Math.abs(stateLogCount - currentEntryCount) > 5 || stateLogCount < currentEntryCount) {
+        // Full re-render needed (initial load, large jump, or log reset)
+        logsDiv.innerHTML = '';
+        state.logs.forEach(l => appendLogEntry(l));
+      } else if (stateLogCount > currentEntryCount) {
+        // Incremental append
+        const newLogs = state.logs.slice(currentEntryCount);
+        newLogs.forEach(l => appendLogEntry(l));
+      }
+    } else if (state.logs && state.logs.length === 0) {
+      logsDiv.innerHTML = '';
     }
+    console.timeEnd('CC_UI_UPDATE');
   }
 
   // Fetch initial state
@@ -117,10 +158,10 @@
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      appendLogEntry(msg.log);
     }
   });
 
@@ -141,8 +182,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    // UI will be updated by storage change listener or direct message
   });
 
   // Auto-activate on load
