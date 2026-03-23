@@ -73,6 +73,50 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Incremental UI Rendering
+  function appendLog(logEntry) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    entry.dataset.id = logEntry.id;
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = logEntry.timestamp;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${logEntry.text}`));
+
+    logsDiv.appendChild(entry);
+
+    // Sliding window: keep only last 50
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
+  function syncLogs(logs) {
+    if (!logs) return;
+
+    // Check if we need a full re-render (e.g. log reset or major divergence)
+    const currentCount = logsDiv.children.length;
+    const newCount = logs.length;
+
+    if (newCount < currentCount || Math.abs(newCount - currentCount) > 5) {
+      logsDiv.innerHTML = '';
+      logs.forEach(appendLog);
+    } else {
+      // Append only missing logs
+      const lastId = logsDiv.lastElementChild?.dataset.id;
+      const lastIndex = lastId ? logs.findIndex(l => l.id === lastId) : -1;
+
+      for (let i = lastIndex + 1; i < logs.length; i++) {
+        appendLog(logs[i]);
+      }
+    }
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,14 +134,8 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
-    }
+    // Incremental Log Sync
+    syncLogs(state.logs);
   }
 
   // Fetch initial state
@@ -112,15 +150,19 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate or incremental logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog({
+        id: 'sys-' + Date.now(),
+        text: 'Auto-activated upon entering AI Studio.',
+        timestamp: 'System'
+      });
+    } else if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
     }
   });
 
@@ -141,8 +183,11 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog({
+      id: 'sys-' + Date.now(),
+      text: 'Memory cleared.',
+      timestamp: 'System'
+    });
   });
 
   // Auto-activate on load

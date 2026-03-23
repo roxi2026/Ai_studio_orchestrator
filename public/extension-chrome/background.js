@@ -30,13 +30,28 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = {
+    id: Math.random().toString(36).substring(2, 9),
+    text: message,
+    timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+
+  // Low-overhead incremental update for active UI
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'LOG_EVENT', log: logEntry }).catch(() => {});
+  }
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce storage writes to 500ms
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +93,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = []; // Reset logs to source of truth
     log('Memory cleared by user.');
     saveState();
   }
