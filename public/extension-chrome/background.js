@@ -30,13 +30,32 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  // BOLT OPTIMIZATION: Store logs as objects with timestamps for better synchronization
+  // and persistence. Limit to last 50 entries to prevent memory bloat.
+  state.logs.push({ text: message, timestamp: Date.now() });
   if (state.logs.length > 50) state.logs.shift();
+
+  // Directly notify the UI for real-time incremental updates
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      log: state.logs[state.logs.length - 1],
+      totalLogs: state.logs.length
+    }).catch(() => {}); // Ignore if tab is not ready
+  }
+
   saveState();
 }
 
+// BOLT OPTIMIZATION: Debounce storage writes to 500ms to reduce disk I/O
+// during high-frequency orchestration events.
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +97,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [state.logs[0]]; // Reset logs but keep the first system message if exists
     log('Memory cleared by user.');
     saveState();
   }
