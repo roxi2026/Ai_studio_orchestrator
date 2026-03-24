@@ -1,0 +1,3 @@
+## 2025-05-14 - Optimized Network Interception & Incremental UI Rendering
+**Learning:** Indiscriminate network interception and O(N) innerHTML re-renders are the primary performance bottlenecks in this extension architecture. Cloning every fetch/XHR response and reading its text consumes significant CPU/Memory, especially on high-activity pages like AI Studio.
+**Action:** Always implement URL filtering in injection scripts before processing network data. Transition UI rendering from `innerHTML` to incremental `appendChild` and track local state (e.g., `currentLogCount`) to sync with the background source of truth via direct message passing and storage change listeners.

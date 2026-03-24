@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mock AI Studio</title>
+    <link rel="stylesheet" href="/extension-chrome/aistudio_ui.css">
+    <style>
+        body { background: #111; color: white; height: 2000px; font-family: sans-serif; }
+        .mock-content { padding: 50px; }
+        textarea { width: 100%; height: 100px; background: #222; color: white; border: 1px solid #444; }
+    </style>
+</head>
+<body>
+    <div class="mock-content">
+        <h1>Mock Google AI Studio</h1>
+        <textarea aria-label="Type a message" placeholder="Type a message"></textarea>
+        <button aria-label="Run">Run</button>
+    </div>
+
+    <!-- Mock Chrome APIs -->
+    <script>
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, cb) => cb({ orchestratorState: { status: 'Idle', logs: [{text: 'System: Initialized', timestamp: Date.now()}], goal: '' } }),
+                    set: (data, cb) => { console.log('Storage Set:', data); if(cb) cb(); }
+                },
+                onChanged: {
+                    addListener: (cb) => { window._storageListener = cb; }
+                }
+            },
+            runtime: {
+                getURL: (path) => '/' + path,
+                sendMessage: (msg, cb) => {
+                    console.log('Runtime SendMessage:', msg);
+                    if (msg.action === 'START_ORCHESTRATION') {
+                        // Simulate background response
+                        setTimeout(() => {
+                            if (window._messageListener) {
+                                window._messageListener({ action: 'LOG_EVENT', log: { text: 'Starting orchestration...', timestamp: Date.now() }, totalLogs: 2 });
+                            }
+                        }, 500);
+                    }
+                },
+                onMessage: {
+                    addListener: (cb) => { window._messageListener = cb; }
+                }
+            }
+        };
+    </script>
+    <script src="/extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>
