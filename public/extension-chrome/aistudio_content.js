@@ -25,22 +25,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.error('[CC Brain] Could not find chat input field.');
     }
   }
+
+  // Optimization: Bridge LOG_EVENT to the in-page UI script
+  if (msg.action === 'LOG_EVENT') {
+     window.postMessage({
+        source: 'ORCHESTRATOR_CONTENT',
+        type: 'LOG_EVENT',
+        log: msg.log,
+        count: msg.count
+     }, '*');
+  }
 });
 
 window.addEventListener('message', (event) => {
   if (event.source !== window || !event.data || event.data.source !== 'ORCHESTRATOR_INJECT') return;
   
-  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE') {
-    if (event.data.payload.includes('"done": true')) {
+  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE' || event.data.type === 'FETCH_RESPONSE') {
+    if (event.data.payload.includes('"done": true') || event.data.payload.includes('generateContent')) {
       try {
         const data = JSON.parse(event.data.payload);
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        // Standard AI Studio response format
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text ||
+                     data[0]?.candidates?.[0]?.content?.parts?.[0]?.text;
+
         if (text) {
           console.log('[CC Brain] Generation complete. Forwarding to background.');
           chrome.runtime.sendMessage({ action: 'MODEL_OUTPUT_COMPLETE', text: text });
         }
       } catch(e) {
-        // Ignore parse errors for incomplete chunks
+        // Ignore parse errors for incomplete chunks or non-JSON payloads
       }
     }
   }

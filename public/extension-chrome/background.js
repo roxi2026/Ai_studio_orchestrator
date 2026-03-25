@@ -22,25 +22,53 @@ let state = {
   status: 'Idle', // Idle, Running, Completed, Error
   goal: '',
   memory: {},
-  logs: [],
+  logs: [], // Each log is now an object: { text, timestamp }
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+// Optimization: Debounced storage saves to reduce I/O overhead
+let saveTimeout = null;
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(message) {
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const logEntry = { text: message, timestamp };
+
+  console.log(`[CC] ${message}`);
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+
+  // Optimization: Direct message to active UI for real-time log streaming
+  // This avoids the latency of chrome.storage event listener for high-frequency logs
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      action: 'LOG_EVENT',
+      log: logEntry,
+      count: state.logs.length
+    }).catch(() => {
+      // Ignore if tab is closed or message fails
+    });
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migrate old string logs to objects if necessary
+    if (state.logs.length > 0 && typeof state.logs[0] === 'string') {
+       state.logs = state.logs.map(l => ({ text: l, timestamp: 'System' }));
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -78,7 +106,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
-    log('Memory cleared by user.');
+    state.logs = [{ text: 'Memory cleared by user.', timestamp: 'System' }];
+    log('Memory cleared.');
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
