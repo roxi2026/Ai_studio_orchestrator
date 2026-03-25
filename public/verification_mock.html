@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extension UI Verification Mock</title>
+    <link rel="stylesheet" href="extension-chrome/aistudio_ui.css">
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: white;
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #mock-ai-studio {
+            width: 80%;
+            height: 80%;
+            border: 1px solid #333;
+            padding: 20px;
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+    <div id="mock-ai-studio">
+        <h1>Mock AI Studio</h1>
+        <p>The extension UI should appear in the bottom right.</p>
+        <textarea aria-label="Type a message" placeholder="Type a message"></textarea>
+    </div>
+
+    <script>
+        // Mock Chrome Extension APIs
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, callback) => {
+                        callback({
+                            orchestratorState: {
+                                status: 'Running',
+                                goal: 'Test Goal',
+                                logs: [
+                                    { text: 'System initialized.', timestamp: '10:00:00' },
+                                    { text: 'Deploying puppet...', timestamp: '10:00:01' }
+                                ]
+                            }
+                        });
+                    },
+                    set: (data, callback) => { if (callback) callback(); }
+                },
+                onChanged: {
+                    addListener: (callback) => {}
+                }
+            },
+            runtime: {
+                getURL: (path) => path,
+                sendMessage: (msg) => console.log('Message sent:', msg),
+                onMessage: {
+                    addListener: (callback) => {
+                        window.simulateMessage = callback;
+                    }
+                }
+            }
+        };
+
+        // Inject the UI script
+    </script>
+    <script src="extension-chrome/aistudio_ui.js"></script>
+    <script>
+        // Simulate some logs after a delay
+        setTimeout(() => {
+            if (window.simulateMessage) {
+                window.simulateMessage({
+                    action: 'LOG_EVENT',
+                    log: { text: 'New incremental log entry.', timestamp: '10:00:05' },
+                    count: 3
+                });
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
