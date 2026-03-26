@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Extension UI Mock</title>
+    <style>
+        body { background: #1a1a1a; color: white; font-family: sans-serif; }
+        #mock-host { width: 400px; height: 600px; border: 1px solid #333; position: relative; overflow: hidden; }
+    </style>
+    <link rel="stylesheet" href="../public/extension-chrome/aistudio_ui.css">
+</head>
+<body>
+    <div id="mock-host">
+        <!-- The extension UI will be injected here by the script -->
+    </div>
+
+    <script>
+        // Mock Chrome API
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, cb) => cb({ orchestratorState: { status: 'Idle', logs: [], goal: '' } }),
+                    set: (data, cb) => { console.log('Storage Set:', data); if(cb) cb(); }
+                },
+                onChanged: {
+                    addListener: (cb) => { window.mockStorageListener = cb; }
+                }
+            },
+            runtime: {
+                getURL: (path) => path,
+                onMessage: {
+                    addListener: (cb) => { window.mockMessageListener = cb; }
+                },
+                sendMessage: (msg) => { console.log('Runtime Send Message:', msg); }
+            }
+        };
+
+        // Load the UI script
+        const script = document.createElement('script');
+        script.src = '../public/extension-chrome/aistudio_ui.js';
+        document.body.appendChild(script);
+    </script>
+</body>
+</html>
