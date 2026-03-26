@@ -3,25 +3,38 @@
 (function() {
   console.log('[CC] Main world script injected. Intercepting network requests...');
 
+  // Performance Optimization: Only process requests related to AI Studio's generation and orchestration
+  const TARGET_PATTERNS = [
+    'generateContent',
+    'v1beta/models',
+    'executor',
+    'reviewer'
+  ];
+
+  function shouldIntercept(url) {
+    const urlStr = url ? url.toString() : '';
+    return TARGET_PATTERNS.some(pattern => urlStr.includes(pattern));
+  }
+
   // --- WebSocket Interception ---
   const OriginalWebSocket = window.WebSocket;
   
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
     
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
-    const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-    
-    ws.addEventListener('message', function(event) {
-      // Forward the intercepted message to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'WS_MESSAGE',
-        pane: pane,
-        payload: event.data
-      }, '*');
-    });
+    if (shouldIntercept(url)) {
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+      ws.addEventListener('message', function(event) {
+        // Forward the intercepted message to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'WS_MESSAGE',
+          pane: pane,
+          payload: event.data
+        }, '*');
+      });
+    }
     
     return ws;
   };
@@ -36,16 +49,18 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'XHR_RESPONSE',
-        pane: pane,
-        payload: xhr.responseText
-      }, '*');
+      if (shouldIntercept(xhr.responseURL)) {
+        // Determine which pane this XHR belongs to based on request URL or payload
+        const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'XHR_RESPONSE',
+          pane: pane,
+          payload: xhr.responseText
+        }, '*');
+      }
     });
     
     return xhr;
@@ -58,26 +73,31 @@
   const originalFetch = window.fetch;
   
   window.fetch = async function(...args) {
-    const response = await originalFetch.apply(this, args);
+    const url = args[0] instanceof Request ? args[0].url : args[0];
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    if (shouldIntercept(url)) {
+      const response = await originalFetch.apply(this, args);
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      // Clone the response so we can read the body without consuming it for the original caller
+      // Performance: Only clone if we actually care about the URL
+      const clonedResponse = response.clone();
+
+      clonedResponse.text().then(text => {
+        const pane = url.toString().includes('executor') ? 'executor' : (url.toString().includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      });
+
+      return response;
+    }
     
-    return response;
+    return originalFetch.apply(this, args);
   };
 
   // --- React Fiber Hook Simulation ---

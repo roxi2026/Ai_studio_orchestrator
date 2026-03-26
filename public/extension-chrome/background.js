@@ -28,15 +28,33 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+// Performance: Debounce storage writes to reduce I/O overhead
+let saveTimeout = null;
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(message) {
+  console.log(`[CC] ${message}`);
+  const logEntry = {
+    message: message,
+    timestamp: Date.now()
+  };
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast to UI if it's active (bypasses storage latency)
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'LOG_EVENT', log: logEntry }).catch(() => {
+      // Ignore errors if the tab is not yet ready or script not injected
+    });
+  }
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,7 +96,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [{ message: 'System ready.', timestamp: Date.now() }];
     log('Memory cleared by user.');
+    // Explicitly notify UI to clear local state
+    if (state.brainTabId) {
+      chrome.tabs.sendMessage(state.brainTabId, { action: 'CLEAR_MEMORY' }).catch(() => {});
+    }
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
