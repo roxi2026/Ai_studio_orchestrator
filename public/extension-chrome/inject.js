@@ -29,6 +29,14 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // Bolt: URL patterns to intercept. Reduces CPU/memory overhead by ignoring non-AI Studio traffic.
+  const INTERCEPT_URLS = [
+    'generateContent',
+    'v1beta/models',
+    'executor',
+    'reviewer'
+  ];
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,8 +44,12 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const url = xhr.responseURL.toString();
+
+      // Bolt: Only process relevant network requests
+      if (!INTERCEPT_URLS.some(pattern => url.includes(pattern))) return;
+
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,12 +72,18 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    const urlArg = args[0];
+    const url = (urlArg instanceof Request ? urlArg.url : urlArg).toString();
+
+    // Bolt: Only clone and process relevant AI Studio responses to save memory
+    if (!INTERCEPT_URLS.some(pattern => url.includes(pattern))) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
