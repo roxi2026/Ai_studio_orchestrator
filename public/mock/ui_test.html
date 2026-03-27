@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Extension UI Mock</title>
+    <link rel="stylesheet" href="../extension-chrome/aistudio_ui.css">
+    <style>
+        body { background: #1a1a1a; color: white; height: 100vh; margin: 0; }
+        #mock-controls { padding: 20px; border-bottom: 1px solid #333; }
+        button { padding: 8px 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="mock-controls">
+        <button id="trigger-logs">Generate 100 Logs</button>
+        <button id="clear-logs">Clear Logs</button>
+        <div id="log-count">UI Logs: 0</div>
+    </div>
+
+    <script>
+        // Mock Chrome APIs
+        const listeners = {
+            storageChange: [],
+            message: []
+        };
+
+        window.chrome = {
+            runtime: {
+                getURL: (path) => path,
+                onMessage: {
+                    addListener: (cb) => listeners.message.push(cb)
+                },
+                sendMessage: (msg) => {
+                    console.log('Mock sendMessage:', msg);
+                    if (msg.action === 'CLEAR_MEMORY') {
+                        // Simulate background response
+                        setTimeout(() => {
+                            chrome.storage.local.set({ orchestratorState: { status: 'Idle', logs: [], goal: '' } });
+                        }, 100);
+                    }
+                }
+            },
+            storage: {
+                local: {
+                    get: (keys, cb) => cb({ orchestratorState: { status: 'Idle', logs: [], goal: '' } }),
+                    set: (data, cb) => {
+                        console.log('Mock storage set:', data);
+                        if (data.orchestratorState) {
+                             listeners.storageChange.forEach(cb => cb({ orchestratorState: { newValue: data.orchestratorState } }, 'local'));
+                        }
+                        if (cb) cb();
+                    }
+                },
+                onChanged: {
+                    addListener: (cb) => listeners.storageChange.push(cb)
+                }
+            }
+        };
+
+        // Track UI log count for verification
+        setInterval(() => {
+            const logs = document.querySelectorAll('.oo-log-entry');
+            document.getElementById('log-count').textContent = `UI Logs: ${logs.length}`;
+        }, 100);
+    </script>
+
+    <!-- The UI script we want to test -->
+    <script src="../extension-chrome/aistudio_ui.js"></script>
+
+    <script>
+        document.getElementById('trigger-logs').addEventListener('click', () => {
+            // Simulate 100 log events rapidly
+            for (let i = 1; i <= 100; i++) {
+                listeners.message.forEach(cb => cb({ action: 'LOG_EVENT', message: `Test log ${i}` }));
+            }
+        });
+
+        document.getElementById('clear-logs').addEventListener('click', () => {
+             document.getElementById('oo-clear-mem-btn').click();
+        });
+    </script>
+</body>
+</html>
