@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extension UI Verification Mock</title>
+    <style>
+        body { background-color: #1a1a1a; color: white; height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }
+    </style>
+    <link rel="stylesheet" href="/extension-chrome/aistudio_ui.css">
+</head>
+<body>
+    <h1>AI Studio Mock Page</h1>
+    <p>The extension UI should appear in the bottom right.</p>
+
+    <script>
+        // Mock Chrome APIs
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, callback) => {
+                        console.log('chrome.storage.local.get', keys);
+                        callback({ orchestratorState: { status: 'Idle', logs: [], goal: '' } });
+                    },
+                    set: (data, callback) => {
+                        console.log('chrome.storage.local.set', data);
+                        if (callback) callback();
+                    }
+                },
+                onChanged: {
+                    addListener: (callback) => {
+                        window.simulateStorageChange = (newValue) => {
+                            callback({ orchestratorState: { newValue } }, 'local');
+                        };
+                    }
+                }
+            },
+            runtime: {
+                getURL: (path) => path,
+                onMessage: {
+                    addListener: (callback) => {
+                        window.simulateMessage = (msg) => {
+                            callback(msg);
+                        };
+                    }
+                },
+                sendMessage: (msg) => {
+                    console.log('chrome.runtime.sendMessage', msg);
+                }
+            }
+        };
+    </script>
+    <script src="/extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>

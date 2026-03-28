@@ -29,14 +29,36 @@ let state = {
 };
 
 function log(message) {
+  const logEntry = {
+    id: Date.now() + Math.random().toString(36).substr(2, 9),
+    timestamp: new Date().toISOString(),
+    message: message
+  };
+
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // 1. Debounced storage persistence (reduces disk I/O)
   saveState();
+
+  // 2. Real-time incremental update via message passing (low overhead)
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, {
+      type: 'LOG_EVENT',
+      log: logEntry,
+      count: state.logs.length
+    }).catch(() => {}); // Ignore errors if tab is not ready
+  }
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce for storage writes
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
