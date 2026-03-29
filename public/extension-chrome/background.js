@@ -30,13 +30,28 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = {
+    message,
+    timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Direct message for real-time, low-overhead incremental updates
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { type: 'LOG_EVENT', log: logEntry, totalCount: state.logs.length });
+  }
+
   saveState();
 }
 
+let saveTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Debounce storage writes to reduce I/O overhead (500ms)
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,7 +93,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
-    log('Memory cleared by user.');
+    // Reset logs in background and notify UI to clear
+    state.logs = [{ message: 'Central Command (CC) reset. Ready for new objective.', timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) }];
+    if (state.brainTabId) {
+      chrome.tabs.sendMessage(state.brainTabId, { type: 'CLEAR_MEMORY', logs: state.logs });
+    }
+    log('Memory and logs cleared by user.');
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);

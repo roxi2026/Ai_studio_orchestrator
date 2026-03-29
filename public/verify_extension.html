@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Extension Verification Mock</title>
+  <link rel="stylesheet" href="/extension-chrome/aistudio_ui.css">
+  <style>
+    body { background: #f0f0f0; height: 100vh; margin: 0; }
+  </style>
+</head>
+<body>
+  <h1>AI Studio Mock Page</h1>
+  <script>
+    // Mock Chrome API
+    window.chrome = {
+      storage: {
+        local: {
+          get: (keys, cb) => cb({ orchestratorState: { status: 'Running', goal: 'Test Goal', logs: [{message: 'Initial log', timestamp: '12:00:00'}] } }),
+          set: (data, cb) => { console.log('Storage Set:', data); if(cb) cb(); }
+        },
+        onChanged: {
+          addListener: (cb) => { window.mockStorageChange = cb; }
+        }
+      },
+      runtime: {
+        onMessage: {
+          addListener: (cb) => { window.mockRuntimeMessage = cb; }
+        },
+        sendMessage: (msg) => {
+          console.log('Runtime SendMessage:', msg);
+          if (msg.action === 'START_ORCHESTRATION') {
+             // Simulate background response
+             window.mockRuntimeMessage({ type: 'LOG_EVENT', log: { message: 'Starting...', timestamp: '12:00:01' }, totalCount: 2 });
+          }
+        },
+        getURL: (path) => '/' + path
+      }
+    };
+  </script>
+  <script src="/extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>
