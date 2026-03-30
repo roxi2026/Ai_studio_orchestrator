@@ -74,6 +74,31 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let currentLogCount = 0;
+
+  function appendLog(logEntry) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = logEntry.timestamp || new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' ' + (logEntry.message || logEntry)));
+
+    logsDiv.appendChild(entry);
+    currentLogCount++;
+
+    // Maintain 50-log limit in the DOM
+    while (currentLogCount > 50) {
+      if (logsDiv.firstChild) logsDiv.removeChild(logsDiv.firstChild);
+      currentLogCount--;
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +115,11 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Initial log render or full sync
+    if (state.logs) {
+      logsDiv.innerHTML = '';
+      currentLogCount = 0;
+      state.logs.forEach(l => appendLog(l));
     }
   }
 
@@ -108,19 +131,57 @@
   // Listen for state changes
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      const newState = changes.orchestratorState.newValue;
+      const oldState = changes.orchestratorState.oldValue;
+
+      // Full re-render if the status/goal changed, or if log count diverged significantly (fallback sync)
+      if (!oldState ||
+          newState.status !== oldState.status ||
+          newState.goal !== oldState.goal ||
+          Math.abs(newState.logs.length - currentLogCount) > 5 ||
+          newState.logs.length < currentLogCount) {
+        updateUI(newState);
+      }
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for messages from content script bridge
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || !event.data || event.data.source !== 'ORCHESTRATOR_CONTENT') return;
+
+    if (event.data.action === 'LOG_EVENT') {
+      appendLog(event.data.logEntry);
+      if (event.data.totalLogs < currentLogCount) {
+        chrome.storage.local.get(['orchestratorState'], (res) => {
+          if (res.orchestratorState) updateUI(res.orchestratorState);
+        });
+      }
+    }
+  });
+
+  // Listen for direct messages (like auto-activate or LOG_EVENT)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
+      appendLog({ message: 'Auto-activated upon entering AI Studio.', timestamp: 'System' });
+    } else if (msg.action === 'LOG_EVENT') {
+      // Direct message log - prioritized if available.
+      // aistudio_content.js also bridges this via window.postMessage for redundancy.
+      // We check for duplicates implicitly via the structured timestamp/message check if needed,
+      // but usually the bridge is only used when direct messaging is blocked or slow.
+      appendLog(msg.logEntry);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Optional: If background total differs from our count, it means a reset happened
+      if (msg.totalLogs < currentLogCount) {
+        chrome.storage.local.get(['orchestratorState'], (res) => {
+          if (res.orchestratorState) updateUI(res.orchestratorState);
+        });
+      }
+    } else if (msg.action === 'CLEAR_MEMORY') {
+      // Background doesn't send CLEAR_MEMORY to tabs, but we handle the storage change.
+      // However, the explicit log from background.js will arrive via LOG_EVENT.
+      currentLogCount = 0;
     }
   });
 
@@ -141,8 +202,8 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Logs are now incremental, so we don't clear the whole div manually here,
+    // background.js will log the action and we'll receive it.
   });
 
   // Auto-activate on load
