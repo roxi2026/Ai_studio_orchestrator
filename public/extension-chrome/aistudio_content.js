@@ -11,6 +11,11 @@ function injectScript(file_path, node) {
 injectScript(chrome.runtime.getURL('inject.js'), 'body');
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'LOG_EVENT') {
+    // Bridge log events from background to the UI script
+    window.postMessage({ source: 'ORCHESTRATOR_CONTENT', ...msg }, '*');
+  }
+
   if (msg.action === 'SEND_PROMPT') {
     console.log('[CC Brain] Sending prompt to AI Studio...');
     const input = document.querySelector('textarea[aria-label="Type a message"]') || document.querySelector('textarea[placeholder*="Type"]');

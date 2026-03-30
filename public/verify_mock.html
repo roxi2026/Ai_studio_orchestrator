@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Studio Extension Verification Mock</title>
+    <link rel="stylesheet" href="extension-chrome/aistudio_ui.css">
+    <style>
+        body { background: #f0f0f0; height: 100vh; margin: 0; }
+        #mock-controls { padding: 20px; }
+    </style>
+</head>
+<body>
+    <div id="mock-controls">
+        <h1>AI Studio Extension Verification Mock</h1>
+        <p>This page simulates the AI Studio environment for testing the extension UI.</p>
+        <button id="trigger-log">Trigger Background Log</button>
+        <button id="trigger-many-logs">Trigger 60 Logs (Limit Check)</button>
+    </div>
+
+    <!-- Mock Chrome APIs -->
+    <script>
+        const state = {
+            orchestratorState: {
+                status: 'Idle',
+                goal: 'Test Goal',
+                logs: [
+                    { timestamp: '00:00:01', message: 'Initial system log' }
+                ]
+            }
+        };
+
+        const storageListeners = [];
+        const messageListeners = [];
+
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, cb) => cb(state),
+                    set: (obj, cb) => {
+                        const oldState = JSON.parse(JSON.stringify(state.orchestratorState));
+                        Object.assign(state, obj);
+                        storageListeners.forEach(l => l({
+                            orchestratorState: {
+                                oldValue: oldState,
+                                newValue: state.orchestratorState
+                            }
+                        }, 'local'));
+                        if (cb) cb();
+                    }
+                },
+                onChanged: {
+                    addListener: (l) => storageListeners.push(l)
+                }
+            },
+            runtime: {
+                getURL: (path) => path,
+                onMessage: {
+                    addListener: (l) => messageListeners.push(l)
+                },
+                sendMessage: (msg) => {
+                    console.log('Message sent to background:', msg);
+                    if (msg.action === 'CLEAR_MEMORY') {
+                        state.orchestratorState.logs = [];
+                        chrome.storage.local.set({ orchestratorState: state.orchestratorState });
+                    }
+                }
+            }
+        };
+
+        document.getElementById('trigger-log').onclick = () => {
+            const logEntry = {
+                timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                message: 'New manual log entry'
+            };
+            state.orchestratorState.logs.push(logEntry);
+            messageListeners.forEach(l => l({ action: 'LOG_EVENT', logEntry, totalLogs: state.orchestratorState.logs.length }));
+        };
+
+        document.getElementById('trigger-many-logs').onclick = () => {
+            for (let i = 0; i < 60; i++) {
+                const logEntry = {
+                    timestamp: '00:00:00',
+                    message: 'Log ' + i
+                };
+                state.orchestratorState.logs.push(logEntry);
+                if (state.orchestratorState.logs.length > 50) state.orchestratorState.logs.shift();
+                messageListeners.forEach(l => l({ action: 'LOG_EVENT', logEntry, totalLogs: state.orchestratorState.logs.length }));
+            }
+        };
+    </script>
+
+    <!-- Injected Extension UI -->
+    <script src="extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>
