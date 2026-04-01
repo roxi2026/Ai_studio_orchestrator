@@ -69,6 +69,37 @@
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
+  let currentLogCount = 0;
+
+  /**
+   * Performance-optimized log appending (O(1))
+   * Uses DOM manipulation instead of innerHTML re-renders
+   */
+  function appendLog(message) {
+    const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const logEntry = document.createElement('div');
+    logEntry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = time;
+
+    logEntry.appendChild(timeSpan);
+    logEntry.appendChild(document.createTextNode(' ' + message));
+
+    logsDiv.appendChild(logEntry);
+    currentLogCount++;
+
+    // Maintain a maximum of 50 logs in UI for memory efficiency
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+      currentLogCount--;
+    }
+
+    // Batch scroll update
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // Toggle Logic
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
@@ -90,12 +121,14 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
+    // Threshold-based Sync: Full re-render only if divergence is detected or state was reset
+    // Divergence check (currentLogCount !== state.logs.length) ensures UI stays in sync
+    if (state.logs && (state.logs.length < currentLogCount || currentLogCount !== state.logs.length)) {
       logsDiv.innerHTML = state.logs.map(l => {
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
         return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
       }).join('');
+      currentLogCount = state.logs.length;
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
@@ -119,8 +152,11 @@
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.message);
     }
   });
 
