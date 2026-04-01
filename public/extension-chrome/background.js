@@ -28,15 +28,39 @@ let state = {
   pendingPrompt: null
 };
 
+/**
+ * Broadcasts a message to all active AI Studio tabs for real-time UI updates
+ */
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs that aren't ready
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for low-latency UI updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', message });
+
   saveState();
 }
 
+let saveTimeout;
+/**
+ * Debounced state persistence (500ms) to reduce storage I/O overhead
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
