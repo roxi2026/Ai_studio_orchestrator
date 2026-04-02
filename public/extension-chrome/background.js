@@ -32,11 +32,28 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Broadcast to active AI Studio tabs for real-time, low-overhead incremental updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: message });
   saveState();
 }
 
+let saveStateTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // 500ms debounce to prevent excessive storage writes during rapid activity
+  clearTimeout(saveStateTimeout);
+  saveStateTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
+/**
+ * Broadcasts a message to all tabs matching AI Studio URL pattern.
+ */
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => chrome.tabs.sendMessage(tab.id, msg).catch(() => {}));
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +95,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = ['Central Command (CC) ready and awaiting instructions.'];
     log('Memory cleared by user.');
     saveState();
   }
