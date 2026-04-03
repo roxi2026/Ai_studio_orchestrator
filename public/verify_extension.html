@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extension UI Verification Mock</title>
+    <link rel="stylesheet" href="extension-chrome/aistudio_ui.css">
+    <style>
+        body {
+            background-color: #1e1e1e;
+            color: white;
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="mock-app-root">
+        <h1>AI Studio Mock Page</h1>
+        <textarea aria-label="Type a message" placeholder="Type a message"></textarea>
+    </div>
+
+    <script>
+        // Mock Chrome Extension API
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, callback) => {
+                        callback({
+                            orchestratorState: {
+                                status: 'Idle',
+                                goal: '',
+                                logs: ['Mock system started.']
+                            }
+                        });
+                    }
+                },
+                onChanged: {
+                    addListener: (callback) => {
+                        window.addEventListener('mock-storage-change', (e) => {
+                            callback(e.detail, 'local');
+                        });
+                    }
+                }
+            },
+            runtime: {
+                getURL: (path) => path,
+                onMessage: {
+                    addListener: (callback) => {
+                        window.addEventListener('mock-runtime-message', (e) => {
+                            callback(e.detail);
+                        });
+                    }
+                },
+                sendMessage: (message) => {
+                    console.log('chrome.runtime.sendMessage:', message);
+                    window.dispatchEvent(new CustomEvent('mock-runtime-sent', { detail: message }));
+                }
+            }
+        };
+
+        // Helper to simulate messages
+        window.simulateLogEvent = (message) => {
+            window.dispatchEvent(new CustomEvent('mock-runtime-message', {
+                detail: { action: 'LOG_EVENT', message: message }
+            }));
+        };
+
+        window.simulateAutoActivate = (state) => {
+            window.dispatchEvent(new CustomEvent('mock-runtime-message', {
+                detail: { action: 'AUTO_ACTIVATE', state: state }
+            }));
+        };
+    </script>
+    <script src="extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>
