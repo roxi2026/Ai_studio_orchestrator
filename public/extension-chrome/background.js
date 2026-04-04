@@ -32,11 +32,38 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time incremental update for UI
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: message });
+
   saveState();
 }
 
+let saveTimeout = null;
+/**
+ * Saves the orchestrator state to local storage with a 500ms debounce.
+ * This significantly reduces disk I/O and 'chrome.storage.local.set' calls
+ * during periods of high-frequency logging or rapid state transitions.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
+}
+
+/**
+ * Broadcasts a message to all active AI Studio tabs.
+ * Used for low-latency updates (like logs) that shouldn't wait for storage sync.
+ */
+async function broadcastToAIStudio(message) {
+  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  tabs.forEach(tab => {
+    chrome.tabs.sendMessage(tab.id, message).catch(() => {
+      // Ignore errors for inactive/unloaded tabs
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {

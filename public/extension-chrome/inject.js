@@ -60,22 +60,33 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance optimization: Only intercept requests related to AI Studio model generation or tool execution.
+    // This avoids the overhead of cloning and reading the body of every single network request.
+    const url = (args[0] instanceof Request ? args[0].url : args[0]).toString();
+    const isTarget = url.includes('generateContent') ||
+                     url.includes('v1beta/models') ||
+                     url.includes('executor') ||
+                     url.includes('reviewer');
+
+    if (isTarget) {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        // Determine which pane this fetch belongs to based on request URL or payload
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(err => {
+        console.warn('[CC] Failed to read intercepted fetch response:', err);
+      });
+    }
     
     return response;
   };
