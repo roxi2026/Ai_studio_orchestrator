@@ -22,21 +22,42 @@ let state = {
   status: 'Idle', // Idle, Running, Completed, Error
   goal: '',
   memory: {},
-  logs: [],
+  logs: ['System: Central Command (CC) ready and awaiting instructions.'],
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+// Helper to broadcast to all AI Studio tabs
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs that might have closed or aren't ready
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for low-latency UI updates without waiting for storage sync
+  broadcastToAIStudio({ type: 'LOG_EVENT', log: message });
+
   saveState();
 }
 
+let saveStateTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // 500ms debounce to prevent excessive disk I/O during high-frequency logging/updates
+  if (saveStateTimeout) clearTimeout(saveStateTimeout);
+  saveStateTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +99,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
+    // Notify UI immediately that logs were reset
+    broadcastToAIStudio({ type: 'CLEAR_MEMORY' });
+    log('System: Central Command (CC) ready and awaiting instructions.');
     log('Memory cleared by user.');
     saveState();
   }
@@ -96,6 +121,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ type: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
