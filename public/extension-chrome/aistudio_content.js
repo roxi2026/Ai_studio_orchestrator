@@ -30,17 +30,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 window.addEventListener('message', (event) => {
   if (event.source !== window || !event.data || event.data.source !== 'ORCHESTRATOR_INJECT') return;
   
-  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE') {
-    if (event.data.payload.includes('"done": true')) {
+  const { type, payload } = event.data;
+
+  // Intercept completion events from WebSocket, XHR, or Fetch
+  if (type === 'WS_MESSAGE' || type === 'XHR_RESPONSE' || type === 'FETCH_RESPONSE') {
+    if (payload.includes('"done": true')) {
       try {
-        const data = JSON.parse(event.data.payload);
+        const data = JSON.parse(payload);
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
-          console.log('[CC Brain] Generation complete. Forwarding to background.');
+          console.log(`[CC Brain] Generation complete (${type}). Forwarding to background.`);
           chrome.runtime.sendMessage({ action: 'MODEL_OUTPUT_COMPLETE', text: text });
         }
       } catch(e) {
-        // Ignore parse errors for incomplete chunks
+        // Ignore parse errors for incomplete chunks or non-JSON payloads
       }
     }
   }

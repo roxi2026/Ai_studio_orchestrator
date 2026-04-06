@@ -44,9 +44,7 @@
 
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
-          <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
-          </div>
+          <div id="oo-logs" class="oo-logs"></div>
         </div>
       </div>
       <div class="oo-status-bar">
@@ -73,6 +71,55 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  /**
+   * High-performance incremental log rendering to prevent layout thrashing
+   * and excessive innerHTML re-paints.
+   */
+  let currentLogCount = 0;
+  function appendLog(message) {
+    // If we reach the capacity, reset for a clean sync from background state
+    if (currentLogCount >= 50) {
+      chrome.storage.local.get(['orchestratorState'], (res) => {
+        if (res.orchestratorState) fullRenderLogs(res.orchestratorState.logs);
+      });
+      return;
+    }
+
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${message}`));
+
+    logsDiv.appendChild(entry);
+    currentLogCount++;
+
+    // Smooth scroll to bottom
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
+  function fullRenderLogs(logs) {
+    if (!logs) return;
+    logsDiv.innerHTML = '';
+    currentLogCount = 0;
+    logs.forEach(l => {
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = 'Sync';
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(` ${l}`));
+      logsDiv.appendChild(entry);
+      currentLogCount++;
+    });
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +137,9 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Full render on initialization or significant state divergence
+    if (state.logs && currentLogCount !== state.logs.length) {
+      fullRenderLogs(state.logs);
     }
   }
 
@@ -105,22 +148,29 @@
     if (res.orchestratorState) updateUI(res.orchestratorState);
   });
 
-  // Listen for state changes
+  // Listen for state changes (backup sync)
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages for real-time low-latency updates
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('System: Auto-activated upon entering AI Studio.');
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    }
+
+    if (msg.action === 'CLEAR_MEMORY') {
+      logsDiv.innerHTML = '';
+      currentLogCount = 0;
+      appendLog('System: Telemetry reset.');
     }
   });
 
@@ -141,8 +191,6 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
   // Auto-activate on load
