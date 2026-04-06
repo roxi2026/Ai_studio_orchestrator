@@ -28,19 +28,48 @@ let state = {
   pendingPrompt: null
 };
 
+/**
+ * Robustly broadcast messages to all active AI Studio tabs for real-time,
+ * low-latency UI updates without storage polling overhead.
+ */
+function broadcastToAIStudio(action, payload = {}) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, { action, ...payload }).catch(() => {
+        // Silently ignore errors from closed or non-responsive tabs
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time incremental broadcast for UI responsiveness
+  broadcastToAIStudio('LOG_EVENT', { log: message });
   saveState();
 }
 
+// 500ms debounce for storage writes to reduce disk I/O pressure
+let storageTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (storageTimeout) clearTimeout(storageTimeout);
+  storageTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    storageTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Ensure logs are pre-populated on load
+    if (state.logs.length === 0) {
+      state.logs.push('Central Command (CC) ready and awaiting instructions.');
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -78,7 +107,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = ['System: Memory and logs reset by user.', 'Central Command (CC) ready and awaiting instructions.'];
     log('Memory cleared by user.');
+    broadcastToAIStudio('CLEAR_MEMORY');
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
@@ -96,6 +127,9 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Explicitly clear memory in UI before starting fresh orchestration
+  broadcastToAIStudio('CLEAR_MEMORY');
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -234,7 +268,6 @@ async function handleModelOutput(text) {
 
   if (action === 'NEW_CHAT') {
     log('Initiating Session Handoff (NEW_CHAT)...');
-    // Inject memory into the new prompt
     const memoryContext = Object.keys(state.memory).length > 0
       ? `\n\n[SYSTEM INJECTED MEMORY FROM PREVIOUS SESSIONS]\n${JSON.stringify(state.memory, null, 2)}\n[/SYSTEM INJECTED MEMORY]`
       : '';
@@ -242,7 +275,6 @@ async function handleModelOutput(text) {
     state.pendingPrompt = `You are continuing a multi-session workflow. Here is the context and your next prompt:\n${memoryContext}\n\n[NEXT PROMPT]\n${nextPrompt}\n[/NEXT PROMPT]\n\nRemember to use <MEMORY_STORE>, <SESSION_ACTION>, <PROMPT>, <PUPPET_DEPLOY>, and <PUPPET_CHAIN> tags to continue orchestrating.`;
     saveState();
     
-    // Trigger session handoff
     chrome.tabs.update(state.brainTabId, { url: 'https://aistudio.google.com/app/prompts/new_chat' });
   } else {
     log('Continuing in current session...');
@@ -252,7 +284,6 @@ async function handleModelOutput(text) {
 
 async function deployPuppet(url, command) {
   let tab;
-  // Create or update puppet tab
   if (state.puppetTabId) {
     try {
       tab = await chrome.tabs.get(state.puppetTabId);
@@ -274,8 +305,6 @@ async function deployPuppet(url, command) {
     log('Puppet tab ready. Executing command...');
     setTimeout(() => {
       let responded = false;
-      
-      // Timeout mechanism
       const timeoutId = setTimeout(() => {
         if (!responded) {
           responded = true;
@@ -303,13 +332,12 @@ async function deployPuppet(url, command) {
           reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
         }
       });
-    }, 2000); // Give scripts a moment to initialize
+    }, 2000);
   };
 
   if (tab.status === 'complete' && tab.url === url) {
     execute();
   } else {
-    // Wait for tab to finish loading
     chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
       if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
@@ -321,7 +349,6 @@ async function deployPuppet(url, command) {
 
 async function deployPuppetChain(url, commands) {
   let tab;
-  // Create or update puppet tab
   if (state.puppetTabId) {
     try {
       tab = await chrome.tabs.get(state.puppetTabId);
@@ -343,8 +370,6 @@ async function deployPuppetChain(url, commands) {
     log('Puppet tab ready. Executing chain...');
     setTimeout(() => {
       let responded = false;
-      
-      // Timeout mechanism - give more time for chains (e.g., 30s)
       const timeoutId = setTimeout(() => {
         if (!responded) {
           responded = true;
@@ -372,13 +397,12 @@ async function deployPuppetChain(url, commands) {
           reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
         }
       });
-    }, 2000); // Give scripts a moment to initialize
+    }, 2000);
   };
 
   if (tab.status === 'complete' && tab.url === url) {
     execute();
   } else {
-    // Wait for tab to finish loading
     chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
       if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
