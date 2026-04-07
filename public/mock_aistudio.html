@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mock AI Studio</title>
+    <style>
+        body { font-family: sans-serif; background: #f0f0f0; padding: 20px; }
+        .chat-input { width: 100%; height: 100px; margin-bottom: 10px; }
+        #logs-debug { background: #000; color: #0f0; padding: 10px; height: 200px; overflow-y: auto; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>Mock AI Studio</h1>
+    <textarea class="chat-input" aria-label="Type a message" placeholder="Type a message"></textarea>
+    <button aria-label="Run">Run</button>
+
+    <h2>Debug Logs</h2>
+    <div id="logs-debug"></div>
+
+    <script>
+        // Mock Chrome Extension APIs
+        window.chrome = {
+            runtime: {
+                getURL: (path) => path,
+                sendMessage: (msg) => {
+                    const log = document.createElement('div');
+                    log.textContent = `[Extension Message] ${JSON.stringify(msg)}`;
+                    document.getElementById('logs-debug').appendChild(log);
+                    console.log('chrome.runtime.sendMessage', msg);
+                },
+                onMessage: {
+                    addListener: (listener) => {
+                        window.addEventListener('message', (event) => {
+                            if (event.data.type === 'MOCK_EXTENSION_MSG') {
+                                listener(event.data.msg);
+                            }
+                        });
+                    }
+                }
+            },
+            storage: {
+                local: {
+                    get: (keys, callback) => callback({}),
+                    set: (data) => console.log('chrome.storage.local.set', data)
+                },
+                onChanged: {
+                    addListener: (listener) => {}
+                }
+            },
+            tabs: {
+                query: (query, callback) => callback([{ id: 1 }])
+            }
+        };
+
+        // UI for testing
+        const sendToUI = (msg) => {
+            window.postMessage({ type: 'MOCK_EXTENSION_MSG', msg }, '*');
+        };
+    </script>
+    <!-- We will inject the UI script manually in Playwright -->
+</body>
+</html>

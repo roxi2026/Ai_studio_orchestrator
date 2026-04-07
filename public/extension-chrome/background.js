@@ -28,19 +28,48 @@ let state = {
   pendingPrompt: null
 };
 
+// --- High-Performance Telemetry Pipeline ---
+let storageTimeout = null;
+
+function saveState() {
+  // 500ms Debounce to prevent I/O thrashing on chrome.storage.local
+  if (storageTimeout) clearTimeout(storageTimeout);
+  storageTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    storageTimeout = null;
+  }, 500);
+}
+
+function broadcastToAIStudio(message) {
+  // Broadcast updates directly to all active AI Studio tabs for real-time UI response
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs that may have been closed
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // 1. Immediate broadcast to any connected UI for low latency
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: message });
+
+  // 2. Debounced persistence
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
   if (result.orchestratorState) state = result.orchestratorState;
+
+  // Initialize with a system ready message if empty
+  if (state.logs.length === 0) {
+    log('Central Command (CC) initialized and ready.');
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -78,7 +107,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
-    log('Memory cleared by user.');
+    state.logs = []; // Also clear logs for a fresh start
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
+    log('Memory and logs cleared by user.');
     saveState();
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
@@ -96,6 +127,9 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Signal UI to clear before we start fresh
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
