@@ -45,7 +45,7 @@
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
           <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
+            <!-- Logs will be injected here -->
           </div>
         </div>
       </div>
@@ -69,9 +69,55 @@
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
+  // Performance Optimization: Track current log count to avoid full re-renders
+  let currentLogCount = 0;
+
   // Toggle Logic
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
+
+  function appendLog(message) {
+    const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = time;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${message}`));
+
+    logsDiv.appendChild(entry);
+
+    // Maintain a max of 50 logs in DOM
+    if (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    currentLogCount = logsDiv.children.length;
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
+  function renderAllLogs(logs) {
+    logsDiv.innerHTML = '';
+    logs.forEach(l => {
+      const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = time;
+
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(` ${l}`));
+
+      logsDiv.appendChild(entry);
+    });
+    currentLogCount = logs.length;
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
 
   // State Management
   function updateUI(state) {
@@ -90,13 +136,10 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Performance Optimization: Only re-render logs if the count has diverged significantly
+    // (e.g., after a clear memory or initial load)
+    if (state.logs && state.logs.length !== currentLogCount) {
+      renderAllLogs(state.logs);
     }
   }
 
@@ -112,15 +155,20 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (real-time telemetry & commands)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    }
+
+    if (msg.action === 'CLEAR_MEMORY') {
+      logsDiv.innerHTML = '';
+      currentLogCount = 0;
     }
   });
 
@@ -141,8 +189,6 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
   // Auto-activate on load
