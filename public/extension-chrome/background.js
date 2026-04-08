@@ -28,15 +28,34 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+function saveState() {
+  // Debounce storage writes to 500ms to reduce I/O overhead
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
+function broadcastToAIStudio(msg) {
+  // Direct message passing for real-time UI updates, bypassing storage sync delay
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {
+        // Ignore errors for tabs that are not ready or closed
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Real-time incremental update to UI
+  broadcastToAIStudio({ action: 'LOG_EVENT', message });
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +97,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
     log('Memory cleared by user.');
     saveState();
   }
@@ -96,6 +117,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
