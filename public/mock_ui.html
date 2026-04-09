@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mock Extension UI</title>
+    <link rel="stylesheet" href="extension-chrome/aistudio_ui.css">
+    <style>
+        body { background: #111; color: white; padding: 20px; }
+        #omnipotent-orchestrator-root { position: relative !important; right: 0 !important; bottom: 0 !important; }
+    </style>
+</head>
+<body>
+    <script>
+        // Mock Chrome API
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, callback) => callback({ orchestratorState: { status: 'Idle', logs: [] } }),
+                    set: (data) => console.log('Storage set:', data)
+                },
+                onChanged: {
+                    addListener: (callback) => { window.onStorageChanged = callback; }
+                }
+            },
+            runtime: {
+                onMessage: {
+                    addListener: (callback) => { window.onRuntimeMessage = callback; }
+                },
+                sendMessage: (msg) => console.log('Runtime message sent:', msg)
+            }
+        };
+    </script>
+    <script src="extension-chrome/aistudio_ui.js"></script>
+    <div style="margin-top: 500px;">
+        <button id="trigger-log" onclick="window.onRuntimeMessage({ action: 'LOG_EVENT', message: 'Manually triggered log' })">Trigger Log</button>
+    </div>
+</body>
+</html>

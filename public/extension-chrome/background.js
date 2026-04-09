@@ -28,15 +28,37 @@ let state = {
   pendingPrompt: null
 };
 
+// Performance Evolution: Real-time event broadcasting to avoid O(n) UI re-renders from storage sync
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {
+        // Ignore errors from inactive or closing tabs
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time incremental update
+  broadcastToAIStudio({ action: 'LOG_EVENT', message });
+
   saveState();
 }
 
+// Performance Evolution: Debounce storage writes to reduce I/O overhead
+// Expectation: ~90% reduction in storage writes during high-frequency logging
+let saveStateTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveStateTimeout) clearTimeout(saveStateTimeout);
+  saveStateTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
