@@ -1,0 +1,3 @@
+## 2025-04-09 - [Telemetry Pipeline Optimization]
+**Learning:** High-frequency logging in agentic UIs creates a major bottleneck when using `innerHTML` re-renders and frequent storage writes. Re-rendering the entire log list for every event is O(n) and blocks the main thread, while unthrottled `chrome.storage.local.set` calls saturate extension I/O.
+**Action:** Always use incremental DOM updates (`appendChild` + `createTextNode`) for logs/feeds. Implement a debounce (e.g., 500ms) for state persistence and use direct message passing (`chrome.tabs.sendMessage`) for real-time UI updates to bypass storage sync latency.
