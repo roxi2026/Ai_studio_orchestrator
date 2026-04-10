@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Studio Mock</title>
+    <link rel="stylesheet" href="extension-chrome/aistudio_ui.css">
+    <style>
+        body { background: #1a1a1a; color: white; height: 100vh; margin: 0; }
+    </style>
+</head>
+<body>
+    <h1>AI Studio Mock Page</h1>
+    <script>
+        // Mock Chrome APIs
+        window.chrome = {
+            runtime: {
+                getURL: (path) => path,
+                sendMessage: (msg) => {
+                    console.log('chrome.runtime.sendMessage', msg);
+                    // Simulate response for START_ORCHESTRATION
+                    if (msg.action === 'START_ORCHESTRATION') {
+                        setTimeout(() => {
+                            window.dispatchEvent(new CustomEvent('mock-log', { detail: 'Initializing Central Command (CC)...' }));
+                            window.dispatchEvent(new CustomEvent('mock-log', { detail: 'Deploying puppet...' }));
+                        }, 500);
+                    }
+                },
+                onMessage: {
+                    addListener: (callback) => {
+                        window.addEventListener('message', (event) => {
+                            if (event.data && event.data.type === 'MOCK_MSG') {
+                                callback(event.data.payload);
+                            }
+                        });
+                        // Also listen to internal mock events for convenience in testing
+                        window.addEventListener('mock-log', (e) => {
+                            callback({ action: 'LOG_EVENT', log: e.detail });
+                        });
+                        window.addEventListener('mock-clear', (e) => {
+                            callback({ action: 'CLEAR_MEMORY' });
+                        });
+                    }
+                }
+            },
+            storage: {
+                local: {
+                    get: (keys, cb) => cb({ orchestratorState: { status: 'Idle', logs: ['System ready'], goal: '' } }),
+                    set: (data, cb) => {
+                        console.log('chrome.storage.local.set', data);
+                        if (cb) cb();
+                    }
+                },
+                onChanged: {
+                    addListener: (cb) => {
+                        window.addEventListener('mock-storage-change', (e) => {
+                            cb({ orchestratorState: { newValue: e.detail } }, 'local');
+                        });
+                    }
+                }
+            }
+        };
+    </script>
+    <script src="extension-chrome/aistudio_ui.js"></script>
+</body>
+</html>

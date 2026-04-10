@@ -60,22 +60,29 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // ⚡ Bolt: Early URL filtering to reduce memory/CPU overhead from unnecessary interception
+    const url = (args[0] instanceof Request ? args[0].url : args[0]).toString();
+    const isAIStudioModelPath = url.includes('executor') ||
+                                url.includes('reviewer') ||
+                                url.includes('generateContent') ||
+                                url.includes('v1beta/models');
+
+    if (isAIStudioModelPath) {
+      // Clone the response only for relevant AI Studio paths
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, window.location.origin); // ⚡ Bolt: Restrict target origin for security
+      });
+    }
     
     return response;
   };
