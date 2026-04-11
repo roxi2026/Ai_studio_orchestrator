@@ -9,19 +9,24 @@
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
     
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
-    const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance: Only intercept if URL matches AI Studio patterns.
+    // This prevents unnecessary cloning/parsing of irrelevant network traffic (e.g. analytics, static assets).
+    const urlStr = url.toString();
+    const isRelevant = urlStr.includes('executor') || urlStr.includes('reviewer') || urlStr.includes('generateContent') || urlStr.includes('v1beta/models');
     
-    ws.addEventListener('message', function(event) {
-      // Forward the intercepted message to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'WS_MESSAGE',
-        pane: pane,
-        payload: event.data
-      }, '*');
-    });
+    if (isRelevant) {
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+      ws.addEventListener('message', function(event) {
+        // Forward the intercepted message to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'WS_MESSAGE',
+          pane: pane,
+          payload: event.data
+        }, window.location.origin); // Security: Restrict target origin
+      });
+    }
     
     return ws;
   };
@@ -36,16 +41,19 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'XHR_RESPONSE',
-        pane: pane,
-        payload: xhr.responseText
-      }, '*');
+      const url = xhr.responseURL;
+      // Performance: Only intercept if URL matches AI Studio patterns
+      if (url.includes('executor') || url.includes('reviewer') || url.includes('generateContent') || url.includes('v1beta/models')) {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'XHR_RESPONSE',
+          pane: pane,
+          payload: xhr.responseText
+        }, window.location.origin); // Security: Restrict target origin
+      }
     });
     
     return xhr;
@@ -60,22 +68,25 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
+    // Performance: Only intercept if URL matches AI Studio patterns
+    const url = args[0] instanceof Request ? args[0].url : args[0].toString();
     
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    if (url.includes('executor') || url.includes('reviewer') || url.includes('generateContent') || url.includes('v1beta/models')) {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, window.location.origin); // Security: Restrict target origin
+      });
+    }
     
     return response;
   };

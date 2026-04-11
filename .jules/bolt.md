@@ -1,0 +1,3 @@
+## 2025-05-15 - Optimized Log Sync & UI Rendering
+**Learning:** High-frequency logging in extensions can thrash storage I/O and main-thread UI rendering if implemented with full re-renders and direct storage writes. In AI Studio, the orchestrator generates logs rapidly, making this a critical bottleneck.
+**Action:** Use a debounced storage write (e.g., 500ms) for persistence and direct message broadcasting for real-time incremental DOM updates (O(1)) using appendChild and createTextNode. Also, filter main-world network interception to only process relevant AI Studio traffic to minimize overhead on the host page.

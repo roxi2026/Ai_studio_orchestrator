@@ -32,11 +32,40 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
+
+  // Real-time broadcast for low-overhead UI updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', message });
+  saveStateDebounced();
+}
+
+let saveTimeout;
+/**
+ * Debounces storage writes to reduce disk I/O and CPU overhead during high-frequency orchestration steps.
+ * Expected Impact: Reduces chrome.storage.local.set calls by ~90% during logging bursts.
+ */
+function saveStateDebounced() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
 function saveState() {
   chrome.storage.local.set({ orchestratorState: state });
+}
+
+/**
+ * Broadcasts messages directly to AI Studio tabs for real-time UI updates,
+ * bypassing the latency of storage-based synchronization.
+ */
+async function broadcastToAIStudio(msg) {
+  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  tabs.forEach(tab => {
+    chrome.tabs.sendMessage(tab.id, msg).catch(() => {
+      // Ignore errors for tabs that might be closed or not ready
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +125,10 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Clear UI logs before starting new orchestration
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -187,11 +220,13 @@ async function handleModelOutput(text) {
   // Parse MEMORY_STORE
   const memoryRegex = /<MEMORY_STORE key="([^"]+)">([\s\S]*?)<\/MEMORY_STORE>/g;
   let match;
+  let memoryStored = false;
   while ((match = memoryRegex.exec(text)) !== null) {
     state.memory[match[1]] = match[2].trim();
     log(`Stored memory: ${match[1]}`);
+    memoryStored = true;
   }
-  saveState();
+  if (memoryStored) saveStateDebounced();
 
   // Parse PUPPET_DEPLOY
   const puppetDeployMatch = text.match(/<PUPPET_DEPLOY url="([^"]+)">\s*<PUPPET_COMMAND>([\s\S]*?)<\/PUPPET_COMMAND>\s*<\/PUPPET_DEPLOY>/);
