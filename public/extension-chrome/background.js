@@ -32,15 +32,41 @@ function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
+
+  // Performance optimization: 500ms debounce for storage writes
+  saveStateDebounced();
+
+  // Real-time telemetry: Broadcast log directly to UI tabs
+  broadcastToAIStudio({ action: 'LOG_EVENT', message });
+}
+
+let saveTimeout;
+function saveStateDebounced() {
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(saveState, 500);
 }
 
 function saveState() {
   chrome.storage.local.set({ orchestratorState: state });
 }
 
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors from tabs that might be closing or not ready
+      });
+    });
+  });
+}
+
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+  } else {
+    // Initialize with system ready message if first run
+    log('System ready.');
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -78,6 +104,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
     log('Memory cleared by user.');
     saveState();
   }
@@ -96,6 +124,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
