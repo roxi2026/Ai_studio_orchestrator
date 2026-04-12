@@ -9,9 +9,16 @@
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
     
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
-    const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance: Early filtering for AI Studio specific patterns
+    const urlStr = url.toString();
+    const isAiStudio = urlStr.includes('generateContent') ||
+                       urlStr.includes('v1beta/models') ||
+                       urlStr.includes('executor') ||
+                       urlStr.includes('reviewer');
+
+    if (!isAiStudio) return ws;
+
+    const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
     
     ws.addEventListener('message', function(event) {
       // Forward the intercepted message to the content script
@@ -20,7 +27,7 @@
         type: 'WS_MESSAGE',
         pane: pane,
         payload: event.data
-      }, '*');
+      }, window.location.origin);
     });
     
     return ws;
@@ -36,8 +43,16 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      // Performance: Early filtering for AI Studio specific patterns
+      const url = xhr.responseURL.toString();
+      const isAiStudio = url.includes('generateContent') ||
+                         url.includes('v1beta/models') ||
+                         url.includes('executor') ||
+                         url.includes('reviewer');
+
+      if (!isAiStudio) return;
+
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -45,7 +60,7 @@
         type: 'XHR_RESPONSE',
         pane: pane,
         payload: xhr.responseText
-      }, '*');
+      }, window.location.origin);
     });
     
     return xhr;
@@ -60,12 +75,20 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Performance: Early filtering for AI Studio specific patterns
+    const urlObj = args[0] instanceof Request ? args[0].url : args[0];
+    const url = urlObj.toString();
+    const isAiStudio = url.includes('generateContent') ||
+                       url.includes('v1beta/models') ||
+                       url.includes('executor') ||
+                       url.includes('reviewer');
+
+    if (!isAiStudio) return response;
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
@@ -74,7 +97,7 @@
         type: 'FETCH_RESPONSE',
         pane: pane,
         payload: text
-      }, '*');
+      }, window.location.origin);
     });
     
     return response;
