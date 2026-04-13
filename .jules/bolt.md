@@ -1,0 +1,3 @@
+## 2025-05-14 - Extension Data Flow Optimization
+**Learning:** High-frequency storage writes in background scripts can lead to UI stuttering and unnecessary disk I/O. Decoupling storage persistence from real-time UI updates via direct message passing (LOG_EVENT) significantly improves perceived responsiveness. Additionally, global network interception without URL filtering adds non-trivial overhead in complex web apps like AI Studio.
+**Action:** Always implement a debounce for 'chrome.storage' writes and use a direct messaging bridge for real-time telemetry. Filter network interceptions at the earliest possible point.
