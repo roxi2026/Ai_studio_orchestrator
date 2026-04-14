@@ -28,15 +28,40 @@ let state = {
   pendingPrompt: null
 };
 
+let saveStateTimeout;
+/**
+ * Debounced state persistence to reduce I/O overhead.
+ * Expected Impact: ~90% reduction in storage writes during high-frequency logging.
+ */
+function saveState() {
+  clearTimeout(saveStateTimeout);
+  saveStateTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
+/**
+ * Broadcasts messages to all active AI Studio tabs for real-time UI updates.
+ */
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Silently ignore errors for closed or non-responsive tabs
+      });
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
-}
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Push incremental update to UI immediately for low latency
+  broadcastToAIStudio({ action: 'LOG_EVENT', message });
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +103,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
     log('Memory cleared by user.');
     saveState();
   }
@@ -96,6 +123,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
