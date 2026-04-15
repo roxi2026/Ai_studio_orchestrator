@@ -1,0 +1,3 @@
+## 2025-04-15 - [Efficient Telemetry & Storage Debouncing]
+**Learning:** High-frequency logging in browser extensions can lead to major UI jank due to O(N) re-renders and I/O bottlenecks from constant storage writes. Replacing `innerHTML` mapping with `appendChild` and implementing a debounce for `chrome.storage.local.set` provides a massive responsiveness boost. Also, verification artifacts (videos/screenshots) and unrelated lockfiles should be cleaned up before submission to keep the PR focused and slim.
+**Action:** Always prefer incremental DOM updates for live logs and debounce state persistence in background scripts. Use a mock environment for headless verification but ensure no temporary test artifacts are committed.
