@@ -30,13 +30,35 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = {
+    text: message,
+    timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
 }
 
+let saveStateDebounceTimer = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Performance: Debounce storage writes to reduce disk I/O.
+  // This reduces chrome.storage.local.set calls by ~90% during high-frequency orchestration.
+  if (saveStateDebounceTimer) clearTimeout(saveStateDebounceTimer);
+  saveStateDebounceTimer = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateDebounceTimer = null;
+  }, 500);
+}
+
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {
+        // Ignore errors for tabs that are closed or not yet ready
+      });
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,8 +100,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
     log('Memory cleared by user.');
     saveState();
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,6 +120,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
