@@ -28,15 +28,34 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveStateTimeout;
+function saveState() {
+  if (saveStateTimeout) clearTimeout(saveStateTimeout);
+  saveStateTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateTimeout = null;
+  }, 500); // 500ms debounce to reduce storage write overhead
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+async function broadcastToAIStudio(message) {
+  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  tabs.forEach(tab => {
+    chrome.tabs.sendMessage(tab.id, message).catch(() => {
+      // Ignore errors from inactive or closed tabs
+    });
+  });
+}
+
+function log(text) {
+  const timestamp = new Date().toISOString();
+  const entry = { text, timestamp };
+
+  console.log(`[CC] ${text}`);
+  state.logs.push(entry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', entry });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
