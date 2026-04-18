@@ -69,6 +69,46 @@
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
+  /**
+   * Optimized incremental log rendering.
+   * Bolt Rationale: appendChild is significantly faster than innerHTML re-renders (O(1) vs O(N)),
+   * prevents layout thrashing, and maintains UI responsiveness during high-volume telemetry.
+   */
+  let currentLogCount = 0;
+  function appendLog(logEntry, skipScroll = false) {
+    if (!logEntry) return;
+
+    // Handle legacy string logs or new object logs
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    const timestamp = logEntry.timestamp || Date.now();
+    const timeStr = new Date(timestamp).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'
+    });
+
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = timeStr;
+
+    entryDiv.appendChild(timeSpan);
+    entryDiv.appendChild(document.createTextNode(` ${text}`));
+
+    logsDiv.appendChild(entryDiv);
+    currentLogCount++;
+
+    // Maintain 50 log cap in DOM
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+      currentLogCount--;
+    }
+
+    if (!skipScroll) {
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+  }
+
   // Toggle Logic
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
@@ -90,12 +130,12 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Optimized Bulk Sync
+    // Only perform full sync if out of sync (simple heuristic: length mismatch)
+    if (state.logs && state.logs.length !== currentLogCount) {
+      logsDiv.innerHTML = '';
+      currentLogCount = 0;
+      state.logs.forEach(l => appendLog(l, true));
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
@@ -112,15 +152,20 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate or real-time logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    } else if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.logEntry);
+    } else if (msg.action === 'CLEAR_MEMORY') {
+      logsDiv.innerHTML = '';
+      currentLogCount = 0;
+      appendLog('Memory cleared.');
     }
   });
 
@@ -141,8 +186,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Handled by CLEAR_MEMORY message listener for consistency
   });
 
   // Auto-activate on load
