@@ -22,25 +22,57 @@ let state = {
   status: 'Idle', // Idle, Running, Completed, Error
   goal: '',
   memory: {},
-  logs: [],
+  logs: [{ text: 'System ready.', timestamp: Date.now() }],
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+// Performance: Broadcast real-time updates to all active AI Studio tabs to avoid constant storage polling
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs that are not ready or closed
+      });
+    });
+  });
+}
+
 function log(message) {
+  const logEntry = {
+    text: message,
+    timestamp: Date.now()
+  };
+
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time incremental update for low latency UI
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+
   saveState();
 }
 
+// Performance: Debounce storage writes to reduce I/O overhead during high-frequency logging
+let saveStateTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveStateTimeout) clearTimeout(saveStateTimeout);
+  saveStateTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateTimeout = null;
+  }, 500); // 500ms debounce
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    // Ensure logs are in the new format if they were strings
+    if (result.orchestratorState.logs && typeof result.orchestratorState.logs[0] === 'string') {
+      result.orchestratorState.logs = result.orchestratorState.logs.map(text => ({ text, timestamp: Date.now() }));
+    }
+    state = result.orchestratorState;
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -78,6 +110,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
+    log('System ready.');
     log('Memory cleared by user.');
     saveState();
   }
@@ -96,6 +131,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
