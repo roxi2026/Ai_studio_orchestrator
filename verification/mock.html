@@ -1,0 +1,4 @@
+<!DOCTYPE html><html><body><div id='mock-container'></div><script>
+        window.chrome = { runtime: { getURL: (p) => p, onMessage: { addListener: (fn) => { window.extensionMessageListener = fn; } }, sendMessage: (m) => {} },
+        storage: { local: { get: (k, cb) => cb({ orchestratorState: { status: 'Idle', logs: [] } }), set: (d, cb) => { if(cb) cb(); } },
+        onChanged: { addListener: (fn) => {} } } }; </script><script src='../public/extension-chrome/aistudio_ui.js'></script></body></html>
