@@ -28,15 +28,47 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+/**
+ * Broadcasts a message to all active AI Studio tabs.
+ * This is used for real-time telemetry (logs) without waiting for storage synchronization.
+ */
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {
+        // Ignore errors from tabs that might be closed or not yet ready
+      });
+    });
+  });
 }
 
+/**
+ * Logs a message to the internal state and broadcasts it to the UI.
+ * Optimizes storage usage by capping logs and debouncing saveState.
+ */
+function log(message) {
+  console.log(`[CC] ${message}`);
+  const logEntry = {
+    text: message,
+    timestamp: Date.now()
+  };
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+}
+
+let saveTimeout;
+/**
+ * Saves the current state to local storage.
+ * Debounced to prevent excessive disk I/O during high-frequency logging.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +128,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
