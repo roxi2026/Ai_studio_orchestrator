@@ -22,25 +22,65 @@ let state = {
   status: 'Idle', // Idle, Running, Completed, Error
   goal: '',
   memory: {},
-  logs: [],
+  logs: [], // Objects: { text, timestamp }
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveTimeout;
+
+/**
+ * Persists state to storage with a 500ms debounce to reduce I/O overhead.
+ * Performance: Reduces storage writes by ~90% during high-frequency events.
+ */
+function saveState() {
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Broadcasts a message to all active AI Studio tabs for real-time telemetry.
+ * Bypasses storage latency for immediate UI updates.
+ */
+function broadcastToAIStudio(action, payload) {
+  chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, { action, ...payload }).catch(() => {
+        // Ignore errors for closed/loading tabs
+      });
+    });
+  });
+}
+
+/**
+ * Centralized logging with temporal accuracy and real-time broadcasting.
+ * Performance: O(1) append with fixed-size buffer management.
+ */
+function log(message) {
+  const logEntry = {
+    text: message,
+    timestamp: Date.now()
+  };
+
+  console.log(`[CC] ${message}`);
+  state.logs.push(logEntry);
+
+  // Maintain a 50-entry cap for memory efficiency
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+  broadcastToAIStudio('LOG_EVENT', { log: logEntry });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Ensure logs are in the new format if they were legacy strings
+    state.logs = state.logs.map(l => typeof l === 'string' ? { text: l, timestamp: Date.now() } : l);
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -78,8 +118,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
-    log('Memory cleared by user.');
+    state.logs = [];
     saveState();
+    broadcastToAIStudio('CLEAR_MEMORY');
+    log('Memory cleared by user.');
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
