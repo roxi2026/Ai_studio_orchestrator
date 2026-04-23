@@ -73,6 +73,27 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Performance Optimization: Incremental Log Rendering
+  function appendLog(logEntry) {
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+
+    const time = new Date(logEntry.timestamp || Date.now()).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'
+    });
+
+    entryDiv.innerHTML = `<span class="oo-log-time">${time}</span> ${logEntry.text || logEntry}`;
+
+    logsDiv.appendChild(entryDiv);
+
+    // Maintain 50-entry cap
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,12 +111,22 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Performance Optimization: Sync logs only if content actually changed
+    // This avoids expensive O(N) DOM re-renders for every status change.
+    const lastLogText = state.logs && state.logs.length > 0 ? state.logs[state.logs.length - 1].text : null;
+    const currentLogCount = logsDiv.children.length;
+
+    if (state.logs && (state.logs.length !== currentLogCount || (lastLogText && !logsDiv.lastChild?.textContent.includes(lastLogText)))) {
+      logsDiv.innerHTML = '';
+      state.logs.forEach(l => {
+        const entryDiv = document.createElement('div');
+        entryDiv.className = 'oo-log-entry';
+        const time = new Date(l.timestamp || Date.now()).toLocaleTimeString([], {
+          hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'
+        });
+        entryDiv.innerHTML = `<span class="oo-log-time">${time}</span> ${l.text || l}`;
+        logsDiv.appendChild(entryDiv);
+      });
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
@@ -105,22 +136,23 @@
     if (res.orchestratorState) updateUI(res.orchestratorState);
   });
 
-  // Listen for state changes
+  // Listen for state changes (syncing state across tabs)
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (real-time low-latency updates)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog({ text: 'Auto-activated upon entering AI Studio.', timestamp: Date.now() });
+    }
+
+    if (msg.action === 'LOG_EVENT' && msg.log) {
+      appendLog(msg.log);
     }
   });
 
@@ -141,8 +173,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog({ text: 'Memory cleared.', timestamp: Date.now() });
   });
 
   // Auto-activate on load

@@ -30,13 +30,33 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for low-latency UI updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+
   saveState();
 }
 
+let saveTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Performance Optimization: Debounce storage writes to reduce disk I/O
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 5000); // 5 second debounce for state persistence
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors from inactive tabs
+      });
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
