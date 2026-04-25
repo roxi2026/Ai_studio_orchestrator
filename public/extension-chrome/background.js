@@ -30,13 +30,20 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
 }
 
+let saveTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 5000); // Debounce storage writes to once every 5 seconds
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -391,4 +398,14 @@ async function deployPuppetChain(url, commands) {
 function reportPuppetResult(result) {
   const prompt = `[SYSTEM: PUPPET RECON REPORT]\n${result}\n[/SYSTEM: PUPPET RECON REPORT]\n\nAnalyze the report and determine the next action using <SESSION_ACTION> and <PROMPT>, or another <PUPPET_DEPLOY> or <PUPPET_CHAIN>.`;
   chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors from tabs that are closed or not yet ready
+      });
+    });
+  });
 }
