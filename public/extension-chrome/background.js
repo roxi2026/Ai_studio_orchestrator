@@ -28,15 +28,39 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+// Performance: Debounce storage writes to reduce disk I/O (O(n) -> O(1) per session burst)
+let saveTimeout;
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 5000); // 5s debounce
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(message) {
+  const timestamp = Date.now();
+  console.log(`[CC] ${message}`);
+
+  const logEntry = { text: message, timestamp };
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+
+  // Real-time incremental update to UI (low overhead message passing)
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+}
+
+// Broadcast message to all active AI Studio tabs
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for closed/unresponsive tabs
+      });
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -69,7 +93,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // --- Central Command (CC) Engine ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'KEEPALIVE') return;
-  if (message.action === 'START_ORCHESTRATION') startOrchestration(message.goal);
+  if (message.action === 'START_ORCHESTRATION') {
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' }); // Reset UI logs for new session
+    startOrchestration(message.goal);
+  }
   if (message.action === 'STOP_ORCHESTRATION') {
     state.status = 'Idle';
     state.pendingPrompt = null;

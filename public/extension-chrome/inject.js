@@ -34,10 +34,22 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+
+    // Capture URL to filter early
+    xhr.open = function(method, url) {
+      this._url = url;
+      return originalOpen.apply(this, arguments);
+    };
     
     xhr.addEventListener('load', function() {
+      const url = this._url || '';
+      // Performance optimization: Only process relevant AI Studio traffic
+      if (!url.includes('generateContent') && !url.includes('v1beta/models') &&
+          !url.includes('executor') && !url.includes('reviewer')) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -59,13 +71,19 @@
   
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+
+    // Performance optimization: Only process relevant AI Studio traffic
+    if (!url.includes('generateContent') && !url.includes('v1beta/models') &&
+        !url.includes('executor') && !url.includes('reviewer')) {
+      return response;
+    }
     
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
