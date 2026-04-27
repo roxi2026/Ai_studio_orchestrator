@@ -30,13 +30,31 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time incremental update to UI (low overhead)
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
   saveState();
 }
 
+let saveTimeout = null;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Debounce storage writes to 5 seconds to reduce disk I/O during heavy orchestration
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 5000);
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {}); // Ignore errors for closed/unloaded tabs
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +96,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = []; // Also clear logs for a fresh start
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
     log('Memory cleared by user.');
     saveState();
   }
