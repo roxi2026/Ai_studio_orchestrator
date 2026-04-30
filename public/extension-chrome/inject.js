@@ -29,15 +29,34 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // --- Network Filtering Heuristics ---
+  const AI_STUDIO_PATTERNS = ['generateContent', 'v1beta/models', 'executor', 'reviewer'];
+  function isAiStudioTraffic(url) {
+    if (!url) return false;
+    const urlStr = String(url).toLowerCase();
+    return AI_STUDIO_PATTERNS.some(p => urlStr.includes(p.toLowerCase()));
+  }
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+
+    // Intercept open to capture URL early
+    xhr.open = function(method, url, ...args) {
+      this._url = url;
+      return originalOpen.apply(this, [method, url, ...args]);
+    };
     
     xhr.addEventListener('load', function() {
+      const url = this._url || xhr.responseURL;
+      if (!isAiStudioTraffic(url)) return;
+
+      const urlStr = String(url).toLowerCase();
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,13 +79,18 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Performance: Early exit for non-essential traffic
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+    if (!isAiStudioTraffic(url)) return response;
+
+    const urlStr = String(url).toLowerCase();
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
