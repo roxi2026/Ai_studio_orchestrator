@@ -1,0 +1,3 @@
+## 2025-05-15 - [Extension Performance: Incremental UI & Debounced Storage]
+**Learning:** High-frequency logging in browser extensions can lead to two major bottlenecks: layout thrashing due to full `innerHTML` re-renders and I/O saturation from constant `chrome.storage` writes. Additionally, unfiltered network interception in `inject.js` adds unnecessary overhead to the main thread by cloning and parsing every request.
+**Action:** Always use incremental DOM updates (`appendChild`) for log-like UIs and enforce a cap. Implement a debounced storage write mechanism with a forced maximum delay. Filter network traffic at the earliest possible point (URL check) before performing expensive operations like cloning responses.
