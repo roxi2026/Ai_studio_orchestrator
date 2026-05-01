@@ -20,7 +20,7 @@
         type: 'WS_MESSAGE',
         pane: pane,
         payload: event.data
-      }, '*');
+      }, window.location.origin);
     });
     
     return ws;
@@ -34,18 +34,28 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
     
+    // Store URL for filtering in the load listener
+    xhr.open = function(method, url) {
+      this._url = url;
+      return originalOpen.apply(this, arguments);
+    };
+
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const url = this._url || '';
+      // Performance: Only process and forward AI Studio model traffic
+      const isAIStudioModel = url.includes('generateContent') || url.includes('v1beta/models');
+      if (!isAIStudioModel) return;
+
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
-      // Forward the intercepted response to the content script
       window.postMessage({
         source: 'ORCHESTRATOR_INJECT',
         type: 'XHR_RESPONSE',
         pane: pane,
         payload: xhr.responseText
-      }, '*');
+      }, window.location.origin);
     });
     
     return xhr;
@@ -59,23 +69,22 @@
   
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
-    
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+    const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+
+    // Performance: Only intercept and clone if it's an AI Studio model request
+    const isAIStudioModel = url.includes('generateContent') || url.includes('v1beta/models');
+    if (isAIStudioModel) {
+      const clonedResponse = response.clone();
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, window.location.origin);
+      });
+    }
     
     return response;
   };

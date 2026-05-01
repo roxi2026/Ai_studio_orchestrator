@@ -28,15 +28,56 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+const SAVE_DEBOUNCE = 5000; // 5s debounce for storage writes
+const MAX_SAVE_DELAY = 15000; // Force save every 15s regardless of activity
+let lastSaveTime = Date.now();
+
+/**
+ * Performance-optimized logging:
+ * 1. Broadcasts event in real-time to UI tabs for O(1) incremental updates
+ * 2. Debounces expensive chrome.storage.local.set calls
+ * 3. Enforces 50-entry cap to keep state payload small
+ */
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for immediate UI update
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
   saveState();
 }
 
 function saveState() {
+  const now = Date.now();
+  clearTimeout(saveTimeout);
+
+  // Force save if we've been debouncing for too long
+  if (now - lastSaveTime > MAX_SAVE_DELAY) {
+    performSave();
+  } else {
+    saveTimeout = setTimeout(performSave, SAVE_DEBOUNCE);
+  }
+}
+
+function performSave() {
   chrome.storage.local.set({ orchestratorState: state });
+  lastSaveTime = Date.now();
+}
+
+async function broadcastToAIStudio(message) {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Silently ignore errors from tabs that are closed or not ready
+      });
+    });
+  } catch (e) {
+    console.error('[CC] Broadcast failed:', e);
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -78,6 +119,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
+    state.logs = [];
+    broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
     log('Memory cleared by user.');
     saveState();
   }
@@ -96,6 +139,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
