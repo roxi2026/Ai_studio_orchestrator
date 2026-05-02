@@ -1,0 +1,37 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                #oo-logs { height: 200px; overflow-y: scroll; border: 1px solid #ccc; }
+                .oo-log-entry { margin: 4px 0; font-family: monospace; }
+                .oo-log-time { color: #666; margin-right: 8px; }
+            </style>
+        </head>
+        <body>
+            <div id="omnipotent-orchestrator-root-target"></div>
+            <script>
+                // Mock Chrome APIs
+                window.chrome = {
+                    storage: {
+                        local: {
+                            get: (keys, cb) => cb({}),
+                            set: (data, cb) => cb && cb()
+                        },
+                        onChanged: {
+                            addListener: (cb) => { window.storageListener = cb; }
+                        }
+                    },
+                    runtime: {
+                        onMessage: {
+                            addListener: (cb) => {
+                                console.log('Message listener registered');
+                                window.messageListener = cb;
+                            }
+                        },
+                        sendMessage: (msg, cb) => { console.log('Message sent:', msg); }
+                    }
+                };
+            </script>
+        </body>
+        </html>
