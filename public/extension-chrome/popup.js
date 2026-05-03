@@ -16,7 +16,11 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
+    logDiv.innerHTML = state.logs.map(l => {
+      const text = l.text || l;
+      const timestamp = l.timestamp ? new Date(l.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' }) : '';
+      return `<div><span style="opacity: 0.5; font-size: 0.8em;">${timestamp}</span> > ${text}</div>`;
+    }).join('');
     logDiv.scrollTop = logDiv.scrollHeight;
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
