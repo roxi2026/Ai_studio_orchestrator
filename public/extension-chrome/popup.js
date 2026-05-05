@@ -16,7 +16,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
+    logDiv.innerHTML = state.logs.map(l => {
+        const text = typeof l === 'object' ? l.text : l;
+        return `<div>> ${text}</div>`;
+    }).join('');
     logDiv.scrollTop = logDiv.scrollHeight;
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
