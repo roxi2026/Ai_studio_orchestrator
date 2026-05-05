@@ -28,15 +28,45 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+let lastSaveAttempt = 0;
+const MAX_SAVE_DELAY = 15000; // Force save every 15s even if still debouncing
+
 function log(message) {
+  const logEntry = { text: message, timestamp: Date.now() };
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for low-latency UI updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', logEntry });
   saveState();
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  const now = Date.now();
+  if (saveTimeout) {
+    if (now - lastSaveAttempt < MAX_SAVE_DELAY) {
+      clearTimeout(saveTimeout);
+    } else {
+      return; // Let existing timeout fire to enforce MAX_SAVE_DELAY
+    }
+  } else {
+    lastSaveAttempt = now;
+  }
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 5000); // 5s debounce to batch storage writes
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {}); // Ignore errors for closed tabs
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +126,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_MEMORY' }); // Signal UI to reset for new orchestration
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
