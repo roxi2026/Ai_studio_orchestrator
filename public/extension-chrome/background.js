@@ -30,13 +30,43 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for immediate UI feedback
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
   saveState();
 }
 
+let saveTimeout;
+const MAX_SAVE_DELAY = 15000;
+let lastSaveAttempt = 0;
+
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  const now = Date.now();
+
+  if (saveTimeout) clearTimeout(saveTimeout);
+
+  // Force save if we've been debouncing for too long
+  if (now - lastSaveAttempt > MAX_SAVE_DELAY) {
+    chrome.storage.local.set({ orchestratorState: state });
+    lastSaveAttempt = now;
+    return;
+  }
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    lastSaveAttempt = Date.now();
+  }, 5000); // 5s debounce for performance
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +126,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
