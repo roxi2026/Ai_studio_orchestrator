@@ -6,6 +6,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  function appendLog(log, skipScroll = false) {
+    const entry = document.createElement('div');
+    const text = typeof log === 'string' ? log : log.text;
+    const timestamp = typeof log === 'string' ? Date.now() : log.timestamp;
+    const timeStr = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit' });
+
+    entry.textContent = `[${timeStr}] > ${text}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +34,18 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental log sync
+    if (state.logs && state.logs.length > 0) {
+      const lastLog = state.logs[state.logs.length - 1];
+      const lastLogText = typeof lastLog === 'string' ? lastLog : lastLog.text;
+      const lastEntry = logDiv.lastElementChild;
+
+      if (!lastEntry || !lastEntry.textContent.includes(lastLogText)) {
+        logDiv.innerHTML = '';
+        state.logs.forEach(l => appendLog(l, true));
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
