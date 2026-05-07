@@ -28,15 +28,48 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+let saveTimeout = null;
+const MAX_SAVE_DELAY = 15000;
+let lastSaveTime = 0;
+
+function log(text) {
+  console.log(`[CC] ${text}`);
+  const logEntry = { text, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for UI immediate update (bypasses storage delay)
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
   saveState();
 }
 
 function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+
+  const now = Date.now();
+  const timeSinceLastSave = now - lastSaveTime;
+
+  if (timeSinceLastSave > MAX_SAVE_DELAY) {
+    commitState();
+  } else {
+    saveTimeout = setTimeout(commitState, 5000);
+  }
+}
+
+function commitState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  lastSaveTime = Date.now();
   chrome.storage.local.set({ orchestratorState: state });
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs that are closed or not ready
+      });
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +129,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' }); // Ensure UI is reset
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
