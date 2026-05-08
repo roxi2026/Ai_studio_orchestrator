@@ -28,15 +28,43 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveTimeout;
+/**
+ * Debounced state saving to reduce chrome.storage.local.set overhead.
+ * Batches multiple updates (like rapid logging) into a single write.
+ */
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Broadcasts real-time updates to all active AI Studio tabs.
+ * This bypasses storage sync overhead for immediate telemetry.
+ */
+function broadcastToAIStudio(action, data) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, { action, ...data }).catch(() => {
+        // Silently ignore errors from tabs that might be closing or not yet ready
+      });
+    });
+  });
+}
+
+function log(message) {
+  const timestamp = Date.now();
+  const logEntry = { text: message, timestamp };
+  console.log(`[CC] ${message}`);
+
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  broadcastToAIStudio('LOG_EVENT', { logEntry });
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
