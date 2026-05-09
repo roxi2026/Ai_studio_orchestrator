@@ -30,13 +30,30 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
 }
 
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {
+        // Ignore errors from tabs that might be closing or not ready
+      });
+    });
+  });
+}
+
+let saveTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {

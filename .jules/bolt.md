@@ -1,0 +1,3 @@
+## 2025-05-14 - Optimized Incremental UI Rendering & State Management
+**Learning:** In Google AI Studio, high-frequency logging and network events can cause significant UI jank and background service worker overhead. Using O(1) `appendChild` instead of O(N) `innerHTML` for logs, and debouncing `chrome.storage` writes, drastically improves responsiveness. Additionally, cloning EVERY fetch response in the main world `inject.js` adds measurable overhead to the host page; targeted filtering is essential.
+**Action:** Always prefer incremental DOM updates for list-like telemetry and implement storage debouncing for high-frequency state updates. Filter network interceptions to minimize host page interference.
