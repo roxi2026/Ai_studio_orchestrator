@@ -6,6 +6,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  function appendLog(logEntry) {
+    if (!logEntry) return;
+    const div = document.createElement('div');
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    const timestamp = typeof logEntry === 'string' ? Date.now() : logEntry.timestamp;
+    const time = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    div.appendChild(document.createTextNode(`[${time}] > ${text}`));
+    logDiv.appendChild(div);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +32,13 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    if (state.logs && state.logs.length > 0) {
+      // Re-populate if counts differ significantly or if we just opened it
+      if (logDiv.children.length === 0 || Math.abs(logDiv.children.length - state.logs.length) > 5) {
+        logDiv.innerHTML = '';
+        state.logs.forEach(appendLog);
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -33,6 +54,13 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
+    }
+  });
+
+  // Real-time incremental updates for popup when open
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
     }
   });
 

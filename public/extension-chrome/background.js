@@ -30,17 +30,38 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+
+  // Real-time broadcast for O(1) UI updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
 }
 
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+    });
+  });
+}
+
+let saveTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migrate old string logs to object format if necessary
+    state.logs = state.logs.map(l => typeof l === 'string' ? { text: l, timestamp: Date.now() } : l);
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
