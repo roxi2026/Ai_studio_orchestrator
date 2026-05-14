@@ -23,20 +23,38 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  logCount: 0, // Total number of logs generated in this session for UI sync
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+let saveTimeout = null;
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  // Store log as object with timestamp for more precise UI rendering
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
+  state.logCount++;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
+/**
+ * Persists extension state to chrome.storage.local.
+ * Implements a 500ms debounce to batch high-frequency updates (like logs)
+ * and reduce disk I/O overhead.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state }, () => {
+      if (chrome.runtime.lastError) {
+        console.error('[CC] Error saving state:', chrome.runtime.lastError);
+      }
+    });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +114,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.logCount = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
