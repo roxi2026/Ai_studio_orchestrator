@@ -74,8 +74,46 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let currentDisplayCount = 0;
+
+  /**
+   * BOLT OPTIMIZATION: Incremental O(1) Rendering
+   * Appends only new log entries to the DOM instead of re-rendering everything.
+   * Maintains a 50-entry cap to ensure DOM performance.
+   */
+  function appendLog(logEntry) {
+    if (!logEntry) return;
+
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    const timestamp = logEntry.timestamp || Date.now();
+    timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'
+    });
+
+    entryDiv.appendChild(timeSpan);
+    entryDiv.appendChild(document.createTextNode(` ${logEntry.text || logEntry}`));
+
+    logsDiv.appendChild(entryDiv);
+
+    // Maintain DOM limit
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
+
+    // First load sync: if we have the "System" placeholder, clear it
+    if (currentDisplayCount === 0 && logsDiv.children.length === 1 && logsDiv.textContent.includes('System')) {
+      logsDiv.innerHTML = '';
+    }
     
     statusText.textContent = state.status;
     statusDot.className = 'oo-status-dot';
@@ -90,13 +128,27 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Incremental Sync logic
+    const stateLogCount = state.logCount || state.logs?.length || 0;
+
+    // BOLT FIX: Handle session reset
+    if (stateLogCount < currentDisplayCount) {
+      logsDiv.innerHTML = '';
+      currentDisplayCount = 0;
+    }
+
+    if (stateLogCount > currentDisplayCount) {
+      // Determine how many new logs to pull from the sliding window
+      const newLogsNeeded = stateLogCount - currentDisplayCount;
+      const logsToAppend = state.logs.slice(-Math.min(newLogsNeeded, 50));
+
+      // If we're totally out of sync (e.g. fresh load), clear and re-sync
+      if (newLogsNeeded >= 50) {
+        logsDiv.innerHTML = '';
+      }
+
+      logsToAppend.forEach(appendLog);
+      currentDisplayCount = stateLogCount;
     }
   }
 
@@ -118,9 +170,19 @@
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Add a welcome log via the optimized path
+      appendLog({ text: 'Auto-activated upon entering AI Studio.', timestamp: Date.now() });
+    }
+
+    // BOLT OPTIMIZATION: Real-time O(1) Telemetry
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+      currentDisplayCount = msg.logCount;
+    }
+
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
+      currentDisplayCount = 0;
     }
   });
 
@@ -141,8 +203,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog({ text: 'Memory cleared.', timestamp: Date.now() });
   });
 
   // Auto-activate on load
