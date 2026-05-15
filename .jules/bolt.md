@@ -1,0 +1,3 @@
+## 2025-05-15 - O(1) Incremental Log Rendering Reset Bug
+**Learning:** Incremental rendering logic that relies on a monotonically increasing counter (like `logCount`) fails when the counter is reset at the start of a new session. If the UI doesn't explicitly detect this reset (e.g., `stateLogCount < currentDisplayCount`), it will retain stale logs and stop updating until the new counter exceeds the previous one.
+**Action:** Always implement a reset check in incremental sync logic. If the state counter is less than the local display counter, clear the UI and reset local trackers. Also, use explicit broadcast events (like `CLEAR_LOGS`) to synchronize reset state across multiple UI components.

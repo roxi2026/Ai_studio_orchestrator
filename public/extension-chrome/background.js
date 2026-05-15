@@ -23,20 +23,58 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  logCount: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+let saveTimeout;
+
+/**
+ * BOLT OPTIMIZATION: State Sync & Real-time Telemetry
+ * 1. Log objects with timestamps for consistent UI rendering.
+ * 2. logCount tracks total session logs for O(1) incremental UI sync.
+ * 3. broadcastToAIStudio provides immediate UI feedback.
+ */
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
+  state.logCount++;
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for O(1) UI update
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry, logCount: state.logCount });
   saveState();
 }
 
+/**
+ * BOLT OPTIMIZATION: Debounced Storage I/O
+ * Throttles chrome.storage.local.set to once every 500ms to batch frequent
+ * state/log updates and reduce disk I/O overhead.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
+}
+
+async function broadcastToAIStudio(payload) {
+  try {
+    // Real-time update for all active AI Studio tabs
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
+    });
+
+    // Real-time update for Popup (if open)
+    chrome.runtime.sendMessage(payload).catch(() => {});
+  } catch (e) {
+    // Ignore broadcast errors during suspension
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +134,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.logCount = 0;
+
+  // BOLT OPTIMIZATION: Signal UI to reset session counters
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
