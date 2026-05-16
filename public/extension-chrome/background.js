@@ -23,20 +23,54 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  logCount: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+/**
+ * Throttles storage writes to reduce disk I/O.
+ * Expected impact: Significant reduction in write operations during high-frequency logging.
+ */
+let saveTimeout;
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Logs a message with a timestamp and broadcasts it for real-time UI updates.
+ * Using objects for logs and a counter enables O(1) sync on the frontend.
+ */
+function log(text) {
+  const timestamp = Date.now();
+  console.log(`[CC] ${text}`);
+  state.logs.push({ text, timestamp });
+  state.logCount = (state.logCount || 0) + 1;
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+  broadcastToUI({
+    action: 'LOG_EVENT',
+    log: { text, timestamp },
+    logCount: state.logCount
+  });
+}
+
+/**
+ * Broadcasts messages to all active AI Studio tabs and the extension popup.
+ */
+async function broadcastToUI(msg) {
+  // Send to all AI Studio tabs
+  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  tabs.forEach(tab => {
+    chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+  });
+  // Send to popup
+  chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +130,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.logCount = 0;
+
+  // Explicitly clear UI logs before starting new session
+  broadcastToUI({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
