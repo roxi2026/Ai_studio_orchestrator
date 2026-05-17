@@ -16,8 +16,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    if (state.logs && state.logs.length > 0) {
+      logDiv.innerHTML = '';
+      state.logs.forEach(l => appendLog(l));
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -26,13 +28,45 @@ document.addEventListener('DOMContentLoaded', () => {
     ).join('') || '<div>No memory stored yet.</div>';
   }
 
+  function appendLog(logEntry) {
+    const entry = document.createElement('div');
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    const timeStr = typeof logEntry === 'string'
+      ? new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      : new Date(logEntry.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    entry.textContent = `[${timeStr}] ${text}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   chrome.storage.local.get(['orchestratorState'], (res) => {
     if (res.orchestratorState) updateUI(res.orchestratorState);
   });
 
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      const newState = changes.orchestratorState.newValue;
+      statusDiv.textContent = newState.status;
+      if (newState.status === 'Running') {
+          statusDiv.style.background = '#e6f4ea'; statusDiv.style.color = '#137333';
+      } else if (newState.status === 'Error') {
+          statusDiv.style.background = '#fce8e6'; statusDiv.style.color = '#c5221f';
+      } else {
+          statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
+      }
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
     }
   });
 
