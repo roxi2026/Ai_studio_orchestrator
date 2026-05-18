@@ -6,6 +6,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  /**
+   * Optimized Incremental Log Appender
+   * Performs O(1) DOM insertion instead of O(N) innerHTML re-renders.
+   */
+  function appendLog(logEntry) {
+    if (!logEntry) return;
+
+    const entryDiv = document.createElement('div');
+    const timestamp = typeof logEntry === 'string' ? Date.now() : (logEntry.timestamp || Date.now());
+    const time = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+
+    entryDiv.textContent = `[${time}] > ${text}`;
+
+    logDiv.appendChild(entryDiv);
+
+    // Maintain 50 entry cap
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +40,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Initial Bulk Render
+    if (state.logs && state.logs.length > 0 && logDiv.children.length === 0) {
+      state.logs.forEach(l => appendLog(l));
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -33,6 +59,16 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
+    }
+  });
+
+  // Listen for incremental updates
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    }
+    if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
     }
   });
 

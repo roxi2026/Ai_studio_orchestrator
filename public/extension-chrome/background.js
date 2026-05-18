@@ -28,15 +28,49 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+
+/**
+ * Optimized Telemetry Broadcaster
+ * Sends incremental updates to all UI surfaces (AI Studio tab & Extension Popup)
+ * reduces overhead of full-state serialization/deserialization.
+ */
+function broadcastToAIStudio(payload) {
+  // Broadcast to all active AI Studio tabs
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, payload).catch(() => {}); // Ignore errors for inactive/loading tabs
+    });
+  });
+  // Also broadcast to popup if it's open
+  chrome.runtime.sendMessage(payload).catch(() => {});
+}
+
 function log(message) {
+  const timestamp = Date.now();
+  const logEntry = { text: message, timestamp };
+
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Incremental UI update - O(1) broadcast
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+
   saveState();
 }
 
+/**
+ * Batched Storage Persistence
+ * Throttles chrome.storage.local.set with a 500ms debounce.
+ * Reduces I/O overhead during rapid-fire orchestration steps.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +130,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
