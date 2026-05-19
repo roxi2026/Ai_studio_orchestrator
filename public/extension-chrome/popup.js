@@ -6,6 +6,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let currentLogCount = 0;
+
+  function appendLog(logEntry) {
+    if (!logEntry) return;
+    const entryDiv = document.createElement('div');
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    entryDiv.appendChild(document.createTextNode(`> ${text}`));
+
+    while (logDiv.children.length >= 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    logDiv.appendChild(entryDiv);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +32,18 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental log sync
+    const newLogCount = state.logCount || state.logs?.length || 0;
+    if (newLogCount < currentLogCount) {
+      logDiv.innerHTML = '';
+      currentLogCount = 0;
+    }
+
+    if (state.logs && state.logs.length > 0) {
+      const logsToAppend = state.logs.slice(state.logs.length - (newLogCount - currentLogCount));
+      logsToAppend.forEach(l => appendLog(l));
+      currentLogCount = newLogCount;
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -25,6 +51,16 @@ document.addEventListener('DOMContentLoaded', () => {
       `<div class="memory-item"><span class="memory-key">${k}:</span> ${v}</div>`
     ).join('') || '<div>No memory stored yet.</div>';
   }
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+      currentLogCount = msg.logCount || (currentLogCount + 1);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
+      currentLogCount = 0;
+    }
+  });
 
   chrome.storage.local.get(['orchestratorState'], (res) => {
     if (res.orchestratorState) updateUI(res.orchestratorState);
