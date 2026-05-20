@@ -23,24 +23,57 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  logCount: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+let saveTimeout;
+
+function log(text) {
+  const logEntry = { text, timestamp: Date.now() };
+  console.log(`[CC] ${text}`);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+  state.logCount++;
+
   saveState();
+  broadcastToAIStudio({
+    type: 'LOG_EVENT',
+    log: logEntry,
+    totalCount: state.logCount,
+    status: state.status
+  });
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Throttled storage writes to reduce I/O overhead (500ms debounce)
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
+// Push real-time updates to all AI Studio tabs and the popup
+function broadcastToAIStudio(message) {
+  // To tabs
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {}); // Ignore errors for closed tabs
+    });
+  });
+  // To popup
+  chrome.runtime.sendMessage(message).catch(() => {});
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Ensure logs are objects if migrating from old string-based state
+    state.logs = state.logs.map(l => typeof l === 'string' ? { text: l, timestamp: Date.now() } : l);
+    if (!state.logCount) state.logCount = state.logs.length;
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +129,8 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.logCount = 0;
+  broadcastToAIStudio({ type: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
