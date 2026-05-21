@@ -73,6 +73,28 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  function appendLog(message, timestamp) {
+    const time = new Date(timestamp || Date.now()).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = time;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${message}`));
+
+    logsDiv.appendChild(entry);
+
+    // Keep only last 50
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +112,14 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Render Logs (Full sync if needed, but optimized)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      logsDiv.innerHTML = '';
+      state.logs.forEach(l => {
+        const text = typeof l === 'object' ? l.text : l;
+        const ts = typeof l === 'object' ? l.timestamp : null;
+        appendLog(text, ts);
+      });
     }
   }
 
@@ -119,8 +142,11 @@
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    } else if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log, msg.timestamp);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
     }
   });
 
@@ -141,8 +167,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog('Memory cleared.');
   });
 
   // Auto-activate on load

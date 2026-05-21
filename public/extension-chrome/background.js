@@ -28,15 +28,31 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+    });
+  });
+  chrome.runtime.sendMessage(msg).catch(() => {});
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const timestamp = Date.now();
+  state.logs.push({ text: message, timestamp });
   if (state.logs.length > 50) state.logs.shift();
   saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: message, timestamp });
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +112,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
