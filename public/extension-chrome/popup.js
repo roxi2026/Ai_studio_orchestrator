@@ -6,6 +6,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  function appendLog(log) {
+    const text = typeof log === 'object' ? log.text : log;
+    const timestamp = typeof log === 'object' ? log.timestamp : Date.now();
+    const time = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    const entry = document.createElement('div');
+    const timeSpan = document.createElement('span');
+    timeSpan.style.color = '#5f6368';
+    timeSpan.style.marginRight = '8px';
+    timeSpan.textContent = `[${time}]`;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(text));
+
+    logDiv.appendChild(entry);
+
+    // Maintain cap of 50 entries
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +40,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    if (state.logs && state.logs.length > 0) {
+      logDiv.innerHTML = '';
+      state.logs.forEach(l => appendLog(l));
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -33,6 +59,14 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
     }
   });
 
