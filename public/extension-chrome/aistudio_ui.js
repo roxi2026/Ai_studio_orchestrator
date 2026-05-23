@@ -73,6 +73,39 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  /**
+   * Appends a log entry to the UI incrementally.
+   * Optimizes performance to O(1) appends and prevents expensive O(N) re-renders.
+   */
+  function appendLog(log) {
+    if (!log) return;
+
+    const logEntry = document.createElement('div');
+    logEntry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+
+    const timestamp = typeof log === 'object' ? log.timestamp : Date.now();
+    const text = typeof log === 'object' ? log.text : log;
+
+    timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'
+    });
+
+    logEntry.appendChild(timeSpan);
+    logEntry.appendChild(document.createTextNode(' ' + text));
+
+    logsDiv.appendChild(logEntry);
+
+    // Maintain 50-entry cap
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +123,10 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Initialization
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      logsDiv.innerHTML = '';
+      state.logs.forEach(appendLog);
     }
   }
 
@@ -112,15 +142,20 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate and real-time logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    }
+
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    }
+
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
     }
   });
 

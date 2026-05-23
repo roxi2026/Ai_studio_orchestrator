@@ -28,15 +28,45 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveTimeout = null;
+
+/**
+ * Optimizes state persistence by debouncing storage writes.
+ * Reduces I/O overhead during frequent updates (like logging).
+ */
+function saveState() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Broadcasts a message to all active AI Studio tabs.
+ */
+async function broadcastToAIStudio(message) {
+  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  tabs.forEach(tab => {
+    chrome.tabs.sendMessage(tab.id, message).catch(() => {
+      // Ignore errors for closed/loading tabs
+    });
+  });
+}
+
+/**
+ * Enhanced logging with real-time broadcasting for O(1) UI updates.
+ */
+function log(text) {
+  console.log(`[CC] ${text}`);
+  const logEntry = { text, timestamp: Date.now() };
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+
+  // Real-time broadcast for O(1) incremental UI appends
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -92,6 +122,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function startOrchestration(goal) {
+  // Clear UI logs before starting new session
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   state.goal = goal;
   state.status = 'Running';
   state.memory = {};
