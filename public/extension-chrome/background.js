@@ -28,15 +28,37 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveTimeout;
+function saveState() {
+  // Performance: Debounce storage writes to reduce I/O overhead.
+  // Throttling chrome.storage.local.set improves responsiveness during rapid state changes.
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(message) {
+  const logEntry = { text: message, timestamp: Date.now() };
+  console.log(`[CC] ${message}`);
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+  saveState();
+
+  // Performance: Broadcast log events for real-time O(1) UI appends.
+  // This avoids expensive O(N) full log list re-renders from storage changes.
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+}
+
+function broadcastToAIStudio(payload) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, payload).catch(() => {
+        // Silently catch errors from tabs that are not yet ready or closed
+      });
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +118,8 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  // Performance: Clear logs in UI immediately
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
