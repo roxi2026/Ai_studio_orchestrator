@@ -28,19 +28,44 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for low-latency telemetry
+  chrome.runtime.sendMessage({ action: 'LOG_EVENT', log: logEntry });
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+
   saveState();
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Debounce storage writes to 500ms to reduce disk I/O
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
+}
+
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {}); // Ignore errors for closed/unready tabs
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migrate legacy string logs if they exist
+    state.logs = state.logs.map(l => typeof l === 'string' ? { text: l, timestamp: Date.now() } : l);
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +121,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Explicitly broadcast log clearing
+  chrome.runtime.sendMessage({ action: 'CLEAR_LOGS' });
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
