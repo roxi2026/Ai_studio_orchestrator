@@ -28,15 +28,47 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+/**
+ * Broadcasts a message to all active AI Studio tabs.
+ */
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors from tabs that are closed or not ready
+      });
+    });
+  });
 }
 
+/**
+ * Logs a message, updates state, and broadcasts a real-time event.
+ * Optimized with objects and timestamps for O(1) rendering.
+ */
+function log(message) {
+  console.log(`[CC] ${message}`);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+  saveState();
+
+  // Broadcast for real-time O(1) UI update
+  broadcastToAIStudio({ action: 'LOG_EVENT', logEntry });
+  // Also send to popup if it's open
+  chrome.runtime.sendMessage({ action: 'LOG_EVENT', logEntry }).catch(() => {});
+}
+
+let saveTimeout;
+/**
+ * Saves the current state to local storage with a 500ms debounce.
+ * This significantly reduces disk I/O during rapid orchestration steps.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +128,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Explicitly clear UI logs before starting
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+  chrome.runtime.sendMessage({ action: 'CLEAR_LOGS' }).catch(() => {});
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

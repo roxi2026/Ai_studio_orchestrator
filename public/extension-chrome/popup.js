@@ -6,6 +6,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  /**
+   * Appends a single log entry to the UI in O(1) time.
+   */
+  function appendLog(logEntry) {
+    const entry = document.createElement('div');
+    let text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    entry.textContent = `> ${text}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +31,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    if (state.logs && state.logs.length > 0) {
+      logDiv.innerHTML = '';
+      state.logs.forEach(l => appendLog(l));
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -32,7 +49,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      const oldVal = changes.orchestratorState.oldValue;
+      const newVal = changes.orchestratorState.newValue;
+
+      // Log updates handled via direct message
+      if (!oldVal || oldVal.status !== newVal.status || oldVal.goal !== newVal.goal ||
+          Object.keys(oldVal.memory || {}).length !== Object.keys(newVal.memory || {}).length) {
+        updateUI(newVal);
+      }
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.logEntry);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
     }
   });
 
