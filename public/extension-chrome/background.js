@@ -28,19 +28,45 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveTimeout;
+function saveState() {
+  // Debounce storage writes to 500ms to reduce I/O overhead
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(text) {
+  const timestamp = Date.now();
+  const logEntry = { text, timestamp };
+
+  console.log(`[CC] ${text}`);
+  state.logs.push(logEntry);
+  if (state.logs.length > 50) state.logs.shift();
+
+  saveState();
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+}
+
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs that aren't ready or have been closed
+      });
+    });
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migrate legacy string logs to object-based logs if necessary
+    if (state.logs.length > 0 && typeof state.logs[0] === 'string') {
+      state.logs = state.logs.map(l => ({ text: l, timestamp: Date.now() }));
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +122,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
