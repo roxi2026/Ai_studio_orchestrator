@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mock AI Studio - Frontend Verification</title>
+    <style>
+        body { background: #121212; color: white; padding: 20px; }
+        .oo-logs {
+            height: 200px;
+            overflow-y: auto;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: monospace;
+            padding: 8px;
+            border: 1px solid #333;
+        }
+        .oo-log-entry { margin-bottom: 4px; border-left: 2px solid #569cd6; padding-left: 8px; }
+        .oo-log-time { color: #569cd6; margin-right: 8px; font-size: 0.8em; }
+    </style>
+    <link rel="stylesheet" href="../public/extension-chrome/aistudio_ui.css">
+</head>
+<body>
+    <h1>AI Studio Mock Environment</h1>
+    <p>This page simulates AI Studio to verify the Central Command UI optimization.</p>
+
+    <script>
+        // Mock Chrome API
+        window.chrome = {
+            storage: {
+                local: {
+                    get: (keys, cb) => cb({
+                        orchestratorState: {
+                            status: 'Running',
+                            goal: 'Optimize the galaxy',
+                            logs: [
+                                { text: 'Initial log from state', timestamp: Date.now() - 5000 },
+                                { text: 'Another log from state', timestamp: Date.now() - 2000 }
+                            ]
+                        }
+                    }),
+                    onChanged: { addListener: () => {} }
+                },
+                onChanged: { addListener: () => {} }
+            },
+            runtime: {
+                onMessage: { addListener: (listener) => {
+                    window.extensionMessageListener = listener;
+                }},
+                sendMessage: (msg) => { console.log('Message sent to runtime:', msg); }
+            }
+        };
+    </script>
+    <script src="../public/extension-chrome/aistudio_ui.js"></script>
+    <script>
+        // Simulate incremental log updates after load
+        setTimeout(() => {
+            if (window.extensionMessageListener) {
+                window.extensionMessageListener({
+                    action: 'LOG_EVENT',
+                    log: { text: 'Incremental O(1) log update verified!', timestamp: Date.now() }
+                });
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
