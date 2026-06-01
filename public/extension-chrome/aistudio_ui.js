@@ -1,6 +1,5 @@
-// aistudio_ui.js - In-page Command Center injected into AI Studio
-
 (function() {
+  console.log('aistudio_ui.js IIFE execution');
   if (document.getElementById('omnipotent-orchestrator-root')) return;
 
   // Create UI Container
@@ -74,6 +73,30 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  function appendLog(logEntry) {
+    if (!logEntry) return;
+    const { text, timestamp } = typeof logEntry === 'string' ? { text: logEntry, timestamp: Date.now() } : logEntry;
+
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${text}`));
+
+    logsDiv.appendChild(entry);
+
+    // Performance: Maintain 50 log limit in DOM
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +113,10 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Performance Optimization: Only full re-render logs if necessary (e.g., initial load)
+    if (state.logs && state.logs.length > 0 && logsDiv.children.length <= 1) {
+      logsDiv.innerHTML = '';
+      state.logs.forEach(appendLog);
     }
   }
 
@@ -112,17 +132,20 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
-  chrome.runtime.onMessage.addListener((msg) => {
+  // Listen for direct messages (like auto-activate or incremental logs)
+  const messageListener = (msg) => {
+    console.log('Received message in aistudio_ui:', msg);
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    } else if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
     }
-  });
+  };
+  chrome.runtime.onMessage.addListener(messageListener);
 
   // Actions
   startBtn.addEventListener('click', () => {
@@ -141,8 +164,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog('Memory cleared.');
   });
 
   // Auto-activate on load
