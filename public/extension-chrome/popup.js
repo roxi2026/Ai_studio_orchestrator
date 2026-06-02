@@ -6,6 +6,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  function appendLog(logEntry) {
+    if (!logEntry) return;
+    const div = document.createElement('div');
+    const text = typeof logEntry === 'object' ? logEntry.text : logEntry;
+    div.textContent = `> ${text}`;
+    logDiv.appendChild(div);
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +28,19 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Optimized log render (only if container is empty or newly opened)
+    if (state.logs && state.logs.length > 0 && logDiv.children.length <= 1) {
+      const fragment = document.createDocumentFragment();
+      state.logs.forEach(l => {
+        const div = document.createElement('div');
+        const text = typeof l === 'object' ? l.text : l;
+        div.textContent = `> ${text}`;
+        fragment.appendChild(div);
+      });
+      logDiv.innerHTML = '';
+      logDiv.appendChild(fragment);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -33,6 +56,15 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'LOG_EVENT') {
+      appendLog(msg.log);
+    }
+    if (msg.type === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
     }
   });
 
