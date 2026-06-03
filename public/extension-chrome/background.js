@@ -28,15 +28,42 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+
+/**
+ * Optimized log function: stores objects with timestamps and broadcasts
+ * for O(1) incremental rendering in the UI.
+ */
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = { text: message, timestamp: Date.now() };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Direct broadcast for real-time, low-overhead UI updates
+  broadcastToAIStudio({ action: 'LOG_EVENT', log: logEntry });
+  // Also notify the popup if it's open
+  chrome.runtime.sendMessage({ action: 'LOG_EVENT', log: logEntry }).catch(() => {});
   saveState();
 }
 
+/**
+ * Debounced storage persistence to reduce I/O overhead.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
+/**
+ * Broadcasts a message to all active AI Studio tabs.
+ */
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => chrome.tabs.sendMessage(tab.id, msg).catch(() => {}));
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +123,8 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+  chrome.runtime.sendMessage({ action: 'CLEAR_LOGS' }).catch(() => {});
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
