@@ -28,15 +28,51 @@ let state = {
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+let saveTimeout = null;
+
+/**
+ * Broadcasts a message to all active AI Studio tabs.
+ * This is used for real-time telemetry updates.
+ */
+function broadcastToAIStudio(message) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {
+        // Ignore errors for tabs where the script isn't loaded
+      });
+    });
+  });
+}
+
+/**
+ * Optimized logging with O(1) broadcast and persistent storage.
+ * @param {string} text - The log message text.
+ */
+function log(text) {
+  const logEntry = { text, timestamp: Date.now() };
+  console.log(`[CC] ${text}`);
+
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // 1. Immediate broadcast for real-time UI updates (O(1) rendering)
+  broadcastToAIStudio({ type: 'LOG_EVENT', log: logEntry });
+  chrome.runtime.sendMessage({ type: 'LOG_EVENT', log: logEntry }).catch(() => {});
+
+  // 2. Debounced save to storage to reduce I/O overhead
   saveState();
 }
 
+/**
+ * Throttled state persistence to chrome.storage.local.
+ * Batches frequent updates into a single I/O operation every 500ms.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +132,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
