@@ -6,6 +6,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  /**
+   * Optimized log rendering (O(1)).
+   */
+  function appendLog(logEntry) {
+    if (!logDiv) return;
+    const entry = document.createElement('div');
+    const text = typeof logEntry === 'object' ? logEntry.text : logEntry;
+    entry.textContent = `> ${text}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +32,11 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Sync Logs
+    if (state.logs && state.logs.length > 0) {
+      logDiv.innerHTML = '';
+      state.logs.forEach(l => appendLog(l));
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -33,6 +52,12 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'LOG_EVENT') {
+      appendLog(msg.log);
     }
   });
 
