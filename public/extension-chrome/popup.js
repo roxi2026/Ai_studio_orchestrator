@@ -6,7 +6,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
-  function updateUI(state) {
+  /**
+   * Optimized O(1) log append with XSS protection.
+   */
+  function appendLog(logEntry) {
+    const entry = document.createElement('div');
+
+    // Handle both new object-based and legacy string-based log entries
+    const text = typeof logEntry === 'object' ? logEntry.text : logEntry;
+
+    entry.textContent = `> ${text}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
+  function updateUI(state, updateLogs = true) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
         statusDiv.style.background = '#e6f4ea'; statusDiv.style.color = '#137333';
@@ -16,8 +34,10 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    if (updateLogs && state.logs && state.logs.length > 0) {
+      logDiv.innerHTML = '';
+      state.logs.forEach(l => appendLog(l));
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -32,7 +52,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      updateUI(changes.orchestratorState.newValue, false);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'LOG_EVENT') {
+      appendLog(msg.log);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
     }
   });
 

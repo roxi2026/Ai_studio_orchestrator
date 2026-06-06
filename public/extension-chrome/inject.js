@@ -57,43 +57,39 @@
   // --- Fetch Interception ---
   const originalFetch = window.fetch;
   
+  /**
+   * Optimized fetch interception with URL filtering.
+   * Only clones and parses responses from relevant AI Studio API endpoints to minimize overhead.
+   */
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
-    
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+
+    // Only intercept relevant API calls (e.g., model generations)
+    if (url.includes('generateContent') || url.includes('v1beta')) {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {/* Ignore clone errors */});
+    }
     
     return response;
   };
 
-  // --- React Fiber Hook Simulation ---
-  // Inject initialization script before main application bundle executes to capture commit events
-  // This allows reading conversational context directly from memory pool
-  window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
-    supportsFiber: true,
-    inject: function(renderer) {
-      console.log('[CC] React Fiber renderer injected:', renderer);
-      // Hook into renderer commit events to read state object selectors
-    },
-    onCommitFiberRoot: function(rendererID, root, priorityLevel) {
-      // Read current conversational context directly from application's memory pool
-      // Map state object selectors to identify variables controlling temperature limits, active model selection, etc.
-    },
-    onCommitFiberUnmount: function() {}
-  };
+  // --- Cleanup ---
+  // Remove unused React DevTools hook simulation to reduce host page overhead.
+  if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+    console.log('[CC] Cleaning up legacy React DevTools hooks.');
+    delete window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  }
 
 })();
