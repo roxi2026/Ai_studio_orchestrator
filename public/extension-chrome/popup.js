@@ -6,6 +6,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  function appendLog(message) {
+    const entry = document.createElement('div');
+    entry.textContent = `> ${message}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
+  let lastLogCount = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,14 +30,37 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental Log Rendering
+    if (state.logs && state.logs.length > lastLogCount) {
+      const newLogs = state.logs.slice(lastLogCount);
+      newLogs.forEach(appendLog);
+      lastLogCount = state.logs.length;
+    } else if (state.logs && state.logs.length < lastLogCount) {
+      logDiv.innerHTML = '';
+      state.logs.forEach(appendLog);
+      lastLogCount = state.logs.length;
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
-    memoryDiv.innerHTML = Object.entries(state.memory || {}).map(([k, v]) => 
-      `<div class="memory-item"><span class="memory-key">${k}:</span> ${v}</div>`
-    ).join('') || '<div>No memory stored yet.</div>';
+    // Memory update - this stays as is for now as memory is usually small,
+    // but using textContent/DOM nodes for safety
+    memoryDiv.innerHTML = '';
+    const memoryEntries = Object.entries(state.memory || {});
+    if (memoryEntries.length === 0) {
+      memoryDiv.textContent = 'No memory stored yet.';
+    } else {
+      memoryEntries.forEach(([k, v]) => {
+        const item = document.createElement('div');
+        item.className = 'memory-item';
+        const keySpan = document.createElement('span');
+        keySpan.className = 'memory-key';
+        keySpan.textContent = `${k}: `;
+        item.appendChild(keySpan);
+        item.appendChild(document.createTextNode(v));
+        memoryDiv.appendChild(item);
+      });
+    }
   }
 
   chrome.storage.local.get(['orchestratorState'], (res) => {
