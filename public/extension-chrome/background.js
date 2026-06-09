@@ -28,15 +28,34 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = {
+    text: message,
+    timestamp: Date.now()
+  };
+  // Offload timestamp generation to background process
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time broadcast for UI performance (avoiding storage latency for active logs)
+  broadcastToAIStudio({ type: 'LOG_EVENT', log: logEntry });
+
   saveState();
 }
 
+/**
+ * Debounced state persistence to minimize disk I/O.
+ * Especially critical during high-frequency logging from puppet chains.
+ */
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +115,10 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Clear logs in the UI before starting
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -386,6 +409,12 @@ async function deployPuppetChain(url, commands) {
       }
     });
   }
+}
+
+function broadcastToAIStudio(msg) {
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => chrome.tabs.sendMessage(tab.id, msg).catch(() => {}));
+  });
 }
 
 function reportPuppetResult(result) {

@@ -73,6 +73,41 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  /**
+   * Performance-optimized incremental log rendering.
+   * Uses O(1) appendChild instead of O(N) innerHTML re-renders.
+   */
+  function appendLog(logEntry, skipScroll = false) {
+    if (!logEntry) return;
+
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+
+    // Handle both new object-based logs and legacy string logs
+    const timestamp = logEntry.timestamp || Date.now();
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+
+    timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'
+    });
+
+    entryDiv.appendChild(timeSpan);
+    entryDiv.appendChild(document.createTextNode(` ${text}`));
+
+    logsDiv.appendChild(entryDiv);
+
+    // Maintain 50-entry cap to prevent DOM bloat
+    if (logsDiv.childNodes.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    // Smooth scroll to bottom
+    if (!skipScroll) logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,12 +125,13 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Performance: Initial render from state (only if empty to avoid duplicates)
+    if (state.logs && state.logs.length > 0 && logsDiv.childNodes.length <= 1) {
+      // Check if it's the default "ready" message
+      if (logsDiv.childNodes.length === 1 && logsDiv.innerText.includes('awaiting instructions')) {
+        logsDiv.innerHTML = '';
+      }
+      state.logs.forEach(l => appendLog(l, true));
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
@@ -119,8 +155,15 @@
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    }
+
+    if (msg.type === 'LOG_EVENT') {
+      appendLog(msg.log);
+    }
+
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
     }
   });
 
