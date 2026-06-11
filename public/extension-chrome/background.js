@@ -28,15 +28,21 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  // Optimization: Use structured log objects with timestamps to prevent re-calculating on every render
+  state.logs.push({ text: message, timestamp: new Date().toISOString() });
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Optimization: Debounce storage writes to reduce disk I/O during rapid log bursts
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +102,10 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+
+  // Optimization: Clear UI logs before starting new session
+  chrome.tabs.sendMessage(state.brainTabId, { action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

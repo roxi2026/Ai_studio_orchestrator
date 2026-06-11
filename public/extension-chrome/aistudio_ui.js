@@ -73,6 +73,46 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Optimization: Helper to append logs incrementally instead of O(N) re-render
+  function appendLog(logEntry, skipScroll = false) {
+    if (!logEntry) return;
+
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+
+    let text, timestamp;
+    if (typeof logEntry === 'string') {
+      text = logEntry;
+      timestamp = new Date().toISOString();
+    } else {
+      text = logEntry.text;
+      timestamp = logEntry.timestamp;
+    }
+
+    const date = new Date(timestamp);
+    const timeStr = isNaN(date.getTime())
+      ? new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      : date.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    timeSpan.textContent = timeStr;
+    entryDiv.appendChild(timeSpan);
+    entryDiv.appendChild(document.createTextNode(' ' + text));
+
+    logsDiv.appendChild(entryDiv);
+
+    // Performance: Maintain a cap on DOM elements to prevent memory bloat
+    if (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +130,11 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Optimization: Incremental Log Rendering
+    // If the UI is empty (e.g. fresh load), populate it from state
+    if (state.logs && state.logs.length > 0 && logsDiv.querySelectorAll('.oo-log-entry').length === 0) {
+       logsDiv.innerHTML = '';
+       state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
     }
   }
 
@@ -108,7 +146,32 @@
   // Listen for state changes
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
-      updateUI(changes.orchestratorState.newValue);
+      const oldState = changes.orchestratorState.oldValue || { logs: [] };
+      const newState = changes.orchestratorState.newValue;
+
+      updateUI(newState);
+
+      // Optimization: Incremental Log Update
+      // Correctly handle batched logs and the sliding window (max 50)
+      if (newState.logs && newState.logs.length > 0) {
+        const lastOldLog = oldState.logs[oldState.logs.length - 1];
+        let newEntries = [];
+
+        if (!lastOldLog) {
+          newEntries = newState.logs;
+        } else {
+          // Find the index of the last known log to identify new ones
+          // Logs have timestamps, but we use a combination of text and time for safety
+          const lastIdx = newState.logs.findLastIndex(l => l.timestamp === lastOldLog.timestamp && l.text === lastOldLog.text);
+          if (lastIdx !== -1) {
+            newEntries = newState.logs.slice(lastIdx + 1);
+          } else {
+            // If we can't find the last log (e.g. it was shifted out), append all
+            newEntries = newState.logs;
+          }
+        }
+        newEntries.forEach(entry => appendLog(entry));
+      }
     }
   });
 
@@ -119,8 +182,11 @@
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
+    }
+
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
     }
   });
 
@@ -141,8 +207,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog('Memory cleared.');
   });
 
   // Auto-activate on load
