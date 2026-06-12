@@ -28,19 +28,38 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout;
+function saveState() {
+  // Optimization: Debounce storage writes to 500ms to reduce disk I/O
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
+}
+
 function log(message) {
+  const logEntry = {
+    text: message,
+    timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+  };
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
-}
-
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migrate legacy string logs to object logs if necessary
+    if (state.logs.length > 0 && typeof state.logs[0] === 'string') {
+      state.logs = state.logs.map(l => ({
+        text: l,
+        timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      }));
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
