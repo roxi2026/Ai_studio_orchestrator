@@ -44,9 +44,7 @@
 
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
-          <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
-          </div>
+          <div id="oo-logs" class="oo-logs"></div>
         </div>
       </div>
       <div class="oo-status-bar">
@@ -73,6 +71,26 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  function appendLog(log) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    // Handle both object-based logs and legacy strings
+    const text = typeof log === 'string' ? log : log.text;
+    const timestamp = typeof log === 'string'
+      ? new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      : log.timestamp;
+
+    entry.innerHTML = `<span class="oo-log-time">${timestamp}</span> ${text}`;
+    logsDiv.appendChild(entry);
+
+    // Maintain 50 log cap
+    while (logsDiv.childNodes.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,19 +108,40 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Optimization: Incremental Log Rendering
+    const currentLogs = Array.from(logsDiv.childNodes);
+    const stateLogs = state.logs || [];
+
+    // If logs were cleared or completely different, reset
+    if (stateLogs.length === 0) {
+      logsDiv.innerHTML = '';
+    } else if (currentLogs.length === 0) {
+      // Initial population
+      stateLogs.forEach(l => appendLog(l));
+    } else {
+      // Append only new logs by comparing the last one
+      const lastDisplayed = currentLogs[currentLogs.length - 1].innerText;
+      const lastStateLog = stateLogs[stateLogs.length - 1];
+
+      // Simple heuristic: if the last log doesn't match, we might have new logs
+      // In a real app we'd use IDs, but for this extension comparing the last entry is enough.
+      if (!lastDisplayed.includes(lastStateLog.text)) {
+          // Find how many new logs to append
+          // This is a simplified approach; usually we'd track the last processed index
+          const lastIdx = stateLogs.findIndex(l => lastDisplayed.includes(l.text));
+          const newLogs = lastIdx === -1 ? stateLogs : stateLogs.slice(lastIdx + 1);
+          newLogs.forEach(l => appendLog(l));
+      }
     }
   }
 
   // Fetch initial state
   chrome.storage.local.get(['orchestratorState'], (res) => {
     if (res.orchestratorState) updateUI(res.orchestratorState);
+    else {
+      // Default initial log
+      appendLog({ text: "Central Command (CC) ready and awaiting instructions.", timestamp: "System" });
+    }
   });
 
   // Listen for state changes
@@ -117,10 +156,7 @@
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog({ text: "Auto-activated upon entering AI Studio.", timestamp: "System" });
     }
   });
 
@@ -141,8 +177,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog({ text: "Memory cleared.", timestamp: "System" });
   });
 
   // Auto-activate on load
