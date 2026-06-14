@@ -28,19 +28,44 @@ let state = {
   pendingPrompt: null
 };
 
+/**
+ * BOLT OPTIMIZATION: Structured Logging & Debounced Storage
+ * - Logs now include timestamps for O(1) rendering without reflow in UI.
+ * - saveState is debounced (500ms) to reduce Disk I/O overhead.
+ */
+let saveTimeout;
 function log(message) {
+  const timestamp = new Date().toLocaleTimeString([], {
+    hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+
+  // Store structured objects for faster UI rendering
+  state.logs.push({ text: message, timestamp });
+
+  // Cap logs to prevent memory bloat
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500); // 500ms debounce to batch I/O
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migration: Convert legacy string logs to objects if necessary
+    if (state.logs && state.logs.length > 0 && typeof state.logs[0] === 'string') {
+      state.logs = state.logs.map(l => ({
+        text: l,
+        timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      }));
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---

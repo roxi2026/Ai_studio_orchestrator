@@ -74,6 +74,32 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  /**
+   * BOLT OPTIMIZATION: Incremental Logging
+   * - Uses appendLog to avoid O(N) innerHTML re-renders.
+   * - Minimizes layout reflows by only adding new elements.
+   */
+  function appendLog(logEntry) {
+    const div = document.createElement('div');
+    div.className = 'oo-log-entry';
+
+    const time = typeof logEntry === 'string'
+      ? new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+      : logEntry.timestamp;
+
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+
+    div.innerHTML = `<span class="oo-log-time">${time}</span> ${text}`;
+    logsDiv.appendChild(div);
+
+    // Maintain 50 log limit in DOM
+    if (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +116,37 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Rendering
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const lastStateLog = state.logs[state.logs.length - 1];
+      const lastRenderedLogText = logsDiv.lastElementChild ? logsDiv.lastElementChild.textContent : '';
+
+      // Heuristic to detect if we need to append a new log:
+      // Either total count increased, OR the content of the last log is different (indicates rotation)
+      const currentRenderedCount = logsDiv.children.length;
+      const totalLogs = state.logs.length;
+
+      if (currentRenderedCount === 0 || totalLogs < currentRenderedCount) {
+        logsDiv.innerHTML = '';
+        state.logs.forEach(l => appendLog(l));
+      } else {
+        // Check for new logs from the end of the state array
+        // We find the first log in state that isn't yet rendered (by timestamp+text comparison if needed,
+        // but for a simple 50-limit array, we can just check if the last state log is already there)
+        const lastLogContent = `[${lastStateLog.timestamp}] ${lastStateLog.text}`;
+        // Simple check: if the last state log isn't the last rendered log, something is new.
+        if (!lastRenderedLogText.includes(lastStateLog.text)) {
+           // To be robust against duplicates, we can just sync the last N logs if they differ
+           // For Bolt efficiency, we just append the single new log if we're at the limit
+           if (totalLogs === currentRenderedCount) {
+              appendLog(lastStateLog);
+           } else {
+              for (let i = currentRenderedCount; i < totalLogs; i++) {
+                appendLog(state.logs[i]);
+              }
+           }
+        }
+      }
     }
   }
 
@@ -119,8 +169,7 @@
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated upon entering AI Studio.');
     }
   });
 
@@ -141,8 +190,7 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog('Memory cleared.');
   });
 
   // Auto-activate on load
