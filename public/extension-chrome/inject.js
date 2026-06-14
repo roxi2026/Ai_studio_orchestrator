@@ -36,10 +36,18 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      /**
+       * BOLT OPTIMIZATION: Filter intercepted URLs to reduce overhead.
+       * Only process AI Studio API responses.
+       */
+      const url = xhr.responseURL;
+      const isRelevant = url.includes('generateContent') || url.includes('v1beta') ||
+                         url.includes('executor') || url.includes('reviewer');
+
+      if (!isRelevant) return;
+
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
-      // Forward the intercepted response to the content script
       window.postMessage({
         source: 'ORCHESTRATOR_INJECT',
         type: 'XHR_RESPONSE',
@@ -51,7 +59,6 @@
     return xhr;
   };
   
-  // Copy prototype to ensure compatibility
   window.XMLHttpRequest.prototype = OriginalXHR.prototype;
 
   // --- Fetch Interception ---
@@ -60,22 +67,29 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
+    /**
+     * BOLT OPTIMIZATION: Filter fetch interceptions by URL before cloning.
+     * Cloning and reading text for every request (e.g., assets) is expensive.
+     */
+    const input = args[0];
+    const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
     
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+    const isRelevant = url.includes('generateContent') || url.includes('v1beta') ||
+                       url.includes('executor') || url.includes('reviewer');
+
+    if (isRelevant) {
+      const clonedResponse = response.clone();
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {}); // Silent fail for non-textual responses
+    }
     
     return response;
   };
