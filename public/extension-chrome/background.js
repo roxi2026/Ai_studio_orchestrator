@@ -28,19 +28,46 @@ let state = {
   pendingPrompt: null
 };
 
+let saveStateTimer = null;
+/**
+ * Saves the current state to local storage with debouncing (500ms).
+ * @param {boolean} immediate - If true, saves immediately and cancels any pending debounce.
+ */
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveStateTimer) clearTimeout(saveStateTimer);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateTimer = null;
+    return;
+  }
+  if (saveStateTimer) clearTimeout(saveStateTimer);
+  saveStateTimer = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveStateTimer = null;
+  }, 500);
+}
+
+/**
+ * Adds a log entry with a timestamp and triggers a state save.
+ * @param {string} message
+ */
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const entry = { text: message, timestamp: Date.now() };
+  state.logs.push(entry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
-}
-
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migration: Convert legacy string logs to object-based logs
+    if (state.logs && state.logs.length > 0 && typeof state.logs[0] === 'string') {
+      const now = Date.now();
+      state.logs = state.logs.map(l => (typeof l === 'string' ? { text: l, timestamp: now } : l));
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---

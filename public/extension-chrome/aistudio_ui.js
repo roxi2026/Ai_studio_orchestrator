@@ -73,6 +73,38 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  /**
+   * Appends a single log entry to the DOM.
+   * @param {string|object} log - The log entry (string for legacy, object for new)
+   * @param {boolean} skipScroll - If true, doesn't scroll to bottom
+   */
+  function appendLog(log, skipScroll = false) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+
+    const timestamp = typeof log === 'object' ? log.timestamp : Date.now();
+    const text = typeof log === 'object' ? log.text : log;
+
+    timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${text}`));
+
+    logsDiv.appendChild(entry);
+
+    // Cap at 50 entries
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    if (!skipScroll) logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +122,38 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Rendering
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentCount = logsDiv.children.length;
+      const isDefaultState = currentCount === 1 && logsDiv.firstChild.textContent.includes('ready and awaiting instructions');
+
+      if (currentCount === 0 || isDefaultState) {
+        // Initial load or reset
+        logsDiv.innerHTML = '';
+        state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
+      } else {
+        // Find how many new logs to append
+        const lastRenderedText = logsDiv.lastChild.lastChild.textContent.trim();
+        let foundIdx = -1;
+        for (let i = state.logs.length - 1; i >= 0; i--) {
+          const txt = typeof state.logs[i] === 'object' ? state.logs[i].text : state.logs[i];
+          if (txt === lastRenderedText) {
+            foundIdx = i;
+            break;
+          }
+        }
+
+        if (foundIdx === -1) {
+          // Out of sync or completely new window - full re-render
+          logsDiv.innerHTML = '';
+          state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
+        } else {
+          // Append only the missing logs
+          for (let i = foundIdx + 1; i < state.logs.length; i++) {
+            appendLog(state.logs[i]);
+          }
+        }
+      }
     }
   }
 

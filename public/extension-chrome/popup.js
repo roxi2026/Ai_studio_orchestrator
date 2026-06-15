@@ -6,6 +6,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  /**
+   * Appends a single log entry to the DOM.
+   * @param {string|object} log
+   * @param {boolean} skipScroll
+   */
+  function appendLog(log, skipScroll = false) {
+    const entry = document.createElement('div');
+    const text = typeof log === 'object' ? log.text : log;
+    entry.textContent = `> ${text}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    if (!skipScroll) logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +34,34 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental Log Rendering
+    if (state.logs && state.logs.length > 0) {
+      const currentCount = logDiv.children.length;
+
+      if (currentCount === 0) {
+        logDiv.innerHTML = '';
+        state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
+      } else {
+        const lastRenderedText = logDiv.lastChild.textContent.replace(/^> /, '');
+        let foundIdx = -1;
+        for (let i = state.logs.length - 1; i >= 0; i--) {
+          const txt = typeof state.logs[i] === 'object' ? state.logs[i].text : state.logs[i];
+          if (txt === lastRenderedText) {
+            foundIdx = i;
+            break;
+          }
+        }
+
+        if (foundIdx === -1) {
+          logDiv.innerHTML = '';
+          state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
+        } else {
+          for (let i = foundIdx + 1; i < state.logs.length; i++) {
+            appendLog(state.logs[i]);
+          }
+        }
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
