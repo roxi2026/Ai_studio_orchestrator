@@ -6,6 +6,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  // Performance-optimized incremental log rendering
+  function appendLog(logEntry, skipScroll = false) {
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    const timestamp = typeof logEntry === 'string' ? Date.now() : logEntry.timestamp;
+
+    const entryDiv = document.createElement('div');
+    entryDiv.dataset.timestamp = timestamp;
+    entryDiv.appendChild(document.createTextNode('> ' + text));
+    logDiv.appendChild(entryDiv);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +35,38 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Render Logs - Incremental update for O(1) performance
+    const logs = state.logs || [];
+    if (logs.length === 0) {
+      logDiv.innerHTML = '';
+    } else {
+      const lastEntry = logs[logs.length - 1];
+      const lastTimestamp = typeof lastEntry === 'string' ? null : String(lastEntry.timestamp);
+      const currentLastTimestamp = logDiv.lastChild ? logDiv.lastChild.dataset.timestamp : null;
+
+      const isDefault = logDiv.children.length === 0;
+
+      if (isDefault || lastTimestamp !== currentLastTimestamp) {
+        let matchIdx = -1;
+        if (currentLastTimestamp) {
+          for (let i = logs.length - 1; i >= 0; i--) {
+            if (String(logs[i].timestamp) === currentLastTimestamp) {
+              matchIdx = i;
+              break;
+            }
+          }
+        }
+
+        if (matchIdx !== -1) {
+          for (let i = matchIdx + 1; i < logs.length; i++) {
+            appendLog(logs[i], i < logs.length - 1);
+          }
+        } else {
+          logDiv.innerHTML = '';
+          logs.forEach((l, i) => appendLog(l, i < logs.length - 1));
+        }
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     

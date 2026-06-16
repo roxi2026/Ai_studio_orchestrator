@@ -77,6 +77,32 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Performance-optimized incremental log rendering
+  function appendLog(logEntry, skipScroll = false) {
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    const timestamp = typeof logEntry === 'string' ? Date.now() : logEntry.timestamp;
+
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+    entryDiv.dataset.timestamp = timestamp;
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    entryDiv.appendChild(timeSpan);
+    entryDiv.appendChild(document.createTextNode(' ' + text));
+    logsDiv.appendChild(entryDiv);
+
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -114,13 +140,37 @@
       planDiv.innerHTML = '<div class="oo-plan-step">Awaiting meta-planning...</div>';
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Render Logs - Incremental update for O(1) performance
+    const logs = state.logs || [];
+    if (logs.length === 0) {
+      logsDiv.innerHTML = '';
+    } else {
+      const lastEntry = logs[logs.length - 1];
+      const lastTimestamp = typeof lastEntry === 'string' ? null : String(lastEntry.timestamp);
+      const currentLastTimestamp = logsDiv.lastChild ? logsDiv.lastChild.dataset.timestamp : null;
+
+      const isDefault = logsDiv.children.length <= 1 && (logsDiv.innerText.includes('ready') || logsDiv.innerText === '');
+
+      if (isDefault || lastTimestamp !== currentLastTimestamp) {
+        let matchIdx = -1;
+        if (currentLastTimestamp) {
+          for (let i = logs.length - 1; i >= 0; i--) {
+            if (String(logs[i].timestamp) === currentLastTimestamp) {
+              matchIdx = i;
+              break;
+            }
+          }
+        }
+
+        if (matchIdx !== -1) {
+          for (let i = matchIdx + 1; i < logs.length; i++) {
+            appendLog(logs[i], i < logs.length - 1);
+          }
+        } else {
+          logsDiv.innerHTML = '';
+          logs.forEach((l, i) => appendLog(l, i < logs.length - 1));
+        }
+      }
     }
   }
 
@@ -143,8 +193,10 @@
       if (msg.state) updateUI(msg.state);
       
       // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog({ text: 'Auto-activated upon entering AI Studio.', timestamp: Date.now() });
+    }
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
     }
   });
 

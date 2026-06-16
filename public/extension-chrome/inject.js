@@ -60,40 +60,36 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
+    // Normalize URL for filtering
+    const url = args[0] instanceof Request ? args[0].url : String(args[0]);
     
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance: Only intercept relevant AI Studio API calls
+    if (url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer')) {
+      // Clone only when necessary to save memory and CPU
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      });
+    }
     
     return response;
   };
 
-  // --- React Fiber Hook Simulation ---
-  // Inject initialization script before main application bundle executes to capture commit events
-  // This allows reading conversational context directly from memory pool
+  // --- React Fiber Hook (Optimized: No-op for now) ---
+  // Disabled until full state extraction is required to avoid overhead on every commit
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true,
-    inject: function(renderer) {
-      console.log('[CC] React Fiber renderer injected:', renderer);
-      // Hook into renderer commit events to read state object selectors
-    },
-    onCommitFiberRoot: function(rendererID, root, priorityLevel) {
-      // Read current conversational context directly from application's memory pool
-      // Map state object selectors to identify variables controlling temperature limits, active model selection, etc.
-    },
-    onCommitFiberUnmount: function() {}
+    inject: (r) => console.log('[CC] React Hook active (Passive)'),
+    onCommitFiberRoot: (id, r, p) => {},
+    onCommitFiberUnmount: () => {}
   };
 
 })();

@@ -60,40 +60,34 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
+    // Normalize URL
+    const url = args[0] instanceof Request ? args[0].url : String(args[0]);
     
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance: Filter for relevant AI Studio APIs
+    if (url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer')) {
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      });
+    }
     
     return response;
   };
 
-  // --- React Fiber Hook Simulation ---
-  // Inject initialization script before main application bundle executes to capture commit events
-  // This allows reading conversational context directly from memory pool
+  // --- React Fiber Hook (Passive) ---
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true,
-    inject: function(renderer) {
-      console.log('[Orchestrator] React Fiber renderer injected:', renderer);
-      // Hook into renderer commit events to read state object selectors
-    },
-    onCommitFiberRoot: function(rendererID, root, priorityLevel) {
-      // Read current conversational context directly from application's memory pool
-      // Map state object selectors to identify variables controlling temperature limits, active model selection, etc.
-    },
-    onCommitFiberUnmount: function() {}
+    inject: (r) => console.log('[Orchestrator] Hook active'),
+    onCommitFiberRoot: (id, r, p) => {},
+    onCommitFiberUnmount: () => {}
   };
 
 })();
