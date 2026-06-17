@@ -73,30 +73,91 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Incremental Log Rendering Helper
+  function appendLog(logEntry, skipScroll = false) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    // Handle both legacy string logs and new object logs
+    const text = typeof logEntry === 'string' ? logEntry : logEntry.text;
+    const timestamp = typeof logEntry === 'string'
+      ? new Date().toISOString()
+      : (logEntry.timestamp || new Date().toISOString());
+
+    const timeStr = new Date(timestamp).toLocaleTimeString([], {
+      hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+
+    entry.innerHTML = `<span class="oo-log-time">${timeStr}</span> `;
+    entry.appendChild(document.createTextNode(text));
+
+    logsDiv.appendChild(entry);
+
+    // Maintain 50 log limit in DOM
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
     
-    statusText.textContent = state.status;
-    statusDot.className = 'oo-status-dot';
-    
-    if (state.status === 'Running') {
-      statusDot.classList.add('active');
-    } else if (state.status === 'Error') {
-      statusDot.classList.add('error');
+    // Guard: Only update status if changed
+    if (statusText.textContent !== state.status) {
+      statusText.textContent = state.status;
+      statusDot.className = 'oo-status-dot';
+
+      if (state.status === 'Running') {
+        statusDot.classList.add('active');
+      } else if (state.status === 'Error') {
+        statusDot.classList.add('error');
+      }
     }
 
+    // Guard: Only update goal if empty (don't overwrite user typing)
     if (state.goal && !goalInput.value) {
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Optimized Incremental Log Rendering
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentEntries = logsDiv.querySelectorAll('.oo-log-entry');
+
+      // If UI is empty or in default state, do a full initial render
+      if (currentEntries.length === 0 || logsDiv.innerText.includes('ready and awaiting')) {
+        logsDiv.innerHTML = '';
+        state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
+      } else {
+        // Find index of first NEW log entry
+        // We compare the text of the last rendered log to find where to start appending
+        // This is a heuristic that works well for O(1) appending.
+        const lastRenderedText = currentEntries[currentEntries.length - 1].childNodes[2]?.textContent || '';
+        const lastStateLog = state.logs[state.logs.length - 1];
+        const lastStateText = typeof lastStateLog === 'string' ? lastStateLog : lastStateLog.text;
+
+        if (lastRenderedText !== lastStateText) {
+          // Find the last match to handle batch updates correctly
+          let lastMatchIndex = -1;
+          for (let i = state.logs.length - 1; i >= 0; i--) {
+            const stateText = typeof state.logs[i] === 'string' ? state.logs[i] : state.logs[i].text;
+            if (stateText === lastRenderedText) {
+              lastMatchIndex = i;
+              break;
+            }
+          }
+
+          // Append everything after the last match
+          for (let i = lastMatchIndex + 1; i < state.logs.length; i++) {
+            appendLog(state.logs[i], i < state.logs.length - 1);
+          }
+          logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+      }
     }
   }
 
