@@ -30,13 +30,34 @@ let state = {
 
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = {
+    text: message,
+    timestamp: new Date().toISOString()
+  };
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+/**
+ * Persists state to chrome.storage.local with 500ms debounce.
+ * This batches multiple rapid updates (e.g. streaming logs) into a single disk write.
+ * @param {boolean} immediate - If true, saves immediately and clears any pending timeout.
+ */
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +95,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true); // Force immediate save on manual stop
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true); // Force immediate save on manual clear
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
