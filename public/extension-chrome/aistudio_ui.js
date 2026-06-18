@@ -73,6 +73,29 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Optimized Log Rendering: Incremental updates instead of full innerHTML re-renders
+  function appendLog(message, skipScroll = false) {
+    const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    // Use textContent for safety and performance
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = time;
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' ' + message));
+    logsDiv.appendChild(entry);
+
+    // Maintain 50-log cap in DOM
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +113,33 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Render Logs (Incremental)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const logEntries = logsDiv.querySelectorAll('.oo-log-entry');
+      const lastEntry = logEntries[logEntries.length - 1];
+      const lastEntryText = lastEntry ? lastEntry.lastChild.textContent.trim() : null;
+
+      // Find where we left off by looking back from the end of state.logs
+      let lastIndex = -1;
+      if (lastEntryText) {
+        for (let i = state.logs.length - 1; i >= 0; i--) {
+          if (state.logs[i] === lastEntryText) {
+            lastIndex = i;
+            break;
+          }
+        }
+      }
+
+      if (lastIndex === -1) {
+        // Full re-render if we can't find the last log or it's empty
+        logsDiv.innerHTML = '';
+        state.logs.slice(-50).forEach((l, idx, arr) => appendLog(l, idx < arr.length - 1));
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      } else if (lastIndex < state.logs.length - 1) {
+        // Append only truly new logs
+        const newLogs = state.logs.slice(lastIndex + 1);
+        newLogs.forEach(l => appendLog(l));
+      }
     }
   }
 
