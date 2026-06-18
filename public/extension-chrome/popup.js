@@ -6,6 +6,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  // Optimized Log Rendering
+  function appendLog(message, skipScroll = false) {
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.textContent = `> ${message}`;
+    logDiv.appendChild(entry);
+
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+    if (!skipScroll) {
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +31,30 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental Log Update
+    if (state.logs && state.logs.length > 0) {
+      const lastEntry = logDiv.lastElementChild;
+      const lastEntryText = lastEntry ? lastEntry.textContent.replace(/^> /, '').trim() : null;
+
+      let lastIndex = -1;
+      if (lastEntryText) {
+        for (let i = state.logs.length - 1; i >= 0; i--) {
+          if (state.logs[i] === lastEntryText) {
+            lastIndex = i;
+            break;
+          }
+        }
+      }
+
+      if (lastIndex === -1) {
+        logDiv.innerHTML = '';
+        state.logs.slice(-50).forEach((l, idx, arr) => appendLog(l, idx < arr.length - 1));
+        logDiv.scrollTop = logDiv.scrollHeight;
+      } else if (lastIndex < state.logs.length - 1) {
+        const newLogs = state.logs.slice(lastIndex + 1);
+        newLogs.forEach(l => appendLog(l));
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
