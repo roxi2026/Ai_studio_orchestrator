@@ -6,6 +6,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  function renderLogEntry(log) {
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.dataset.timestamp = log.timestamp;
+    entry.textContent = `> ${log.text || log}`;
+    logDiv.appendChild(entry);
+
+    // Keep only last 50 logs in DOM
+    while (logDiv.children.length > 50) {
+      logDiv.removeChild(logDiv.firstChild);
+    }
+
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +31,31 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental Log Rendering Optimization using timestamps for robust synchronization
+    if (state.logs && state.logs.length > 0) {
+      const renderedEntries = logDiv.children;
+      const lastRendered = renderedEntries[renderedEntries.length - 1];
+      const lastTimestamp = lastRendered ? parseFloat(lastRendered.dataset.timestamp) : null;
+
+      if (!lastTimestamp) {
+        logDiv.innerHTML = '';
+        state.logs.forEach(l => renderLogEntry(l));
+      } else {
+        // Find the index of the last rendered log in the new state array
+        const lastIndex = state.logs.findLastIndex(l => l.timestamp === lastTimestamp);
+        if (lastIndex === -1) {
+          // If not found, history might have shifted significantly or been cleared
+          logDiv.innerHTML = '';
+          state.logs.forEach(l => renderLogEntry(l));
+        } else if (lastIndex < state.logs.length - 1) {
+          // Append only truly new logs
+          const newLogs = state.logs.slice(lastIndex + 1);
+          newLogs.forEach(l => renderLogEntry(l));
+        }
+      }
+    } else if (state.logs && state.logs.length === 0) {
+      logDiv.innerHTML = '';
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     

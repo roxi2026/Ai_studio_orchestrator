@@ -60,12 +60,17 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Performance optimization: only clone and process relevant AI Studio API requests
+    const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+    if (!url.includes('generateContent') && !url.includes('v1beta') && !url.includes('executor') && !url.includes('reviewer')) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
