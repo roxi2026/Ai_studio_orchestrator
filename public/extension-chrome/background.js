@@ -29,14 +29,23 @@ let state = {
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const logEntry = {
+    text: message,
+    timestamp: Date.now() + Math.random() // Unique ID for sync
+  };
+  console.log(`[CC] ${logEntry.text}`);
+  state.logs.push(logEntry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
+let saveTimeout;
 function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+  // Debounce storage writes to 500ms to reduce disk I/O
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -69,6 +78,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // --- Central Command (CC) Engine ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'KEEPALIVE') return;
+  if (message.action === 'LOG_EVENT') log(message.text);
   if (message.action === 'START_ORCHESTRATION') startOrchestration(message.goal);
   if (message.action === 'STOP_ORCHESTRATION') {
     state.status = 'Idle';
