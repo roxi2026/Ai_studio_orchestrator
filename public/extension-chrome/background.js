@@ -28,19 +28,42 @@ let state = {
   pendingPrompt: null
 };
 
+// Debounce storage persistence to reduce disk I/O during rapid log events
+let saveTimeout;
+function saveState(immediate = false) {
+  if (immediate) {
+    clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500);
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  // Store logs as objects with timestamps for O(1) incremental rendering in UI
+  const entry = {
+    text: message,
+    timestamp: Date.now()
+  };
+  state.logs.push(entry);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
-}
-
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Migration for legacy string-based logs to object-based logs
+    if (state.logs && state.logs.length > 0 && typeof state.logs[0] === 'string') {
+      state.logs = state.logs.map(l => ({ text: l, timestamp: Date.now() }));
+      saveState(true);
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---

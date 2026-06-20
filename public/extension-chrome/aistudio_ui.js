@@ -73,6 +73,41 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Incremental Rendering Helper
+  function appendLog(logEntry, skipScroll = false) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    // Use timestamp from entry if available for synchronization
+    if (logEntry.timestamp) {
+      entry.dataset.timestamp = logEntry.timestamp;
+    }
+
+    const timeStr = new Date(logEntry.timestamp || Date.now()).toLocaleTimeString([], {
+      hour12: false,
+      hour: '2-digit',
+      minute:'2-digit',
+      second:'2-digit'
+    });
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = timeStr;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(` ${logEntry.text || logEntry}`));
+
+    logsDiv.appendChild(entry);
+
+    // Cap at 50 entries
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    if (!skipScroll) {
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +125,36 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // O(1) Incremental Rendering for Logs
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const existingLogs = logsDiv.querySelectorAll('.oo-log-entry');
+      const lastRenderedTimestamp = existingLogs.length > 0
+        ? parseInt(existingLogs[existingLogs.length - 1].dataset.timestamp)
+        : 0;
+
+      // Find where to start appending
+      let startIndex = 0;
+      if (lastRenderedTimestamp) {
+        // Optimization: iterate backwards to find the last match
+        for (let i = state.logs.length - 1; i >= 0; i--) {
+          if (state.logs[i].timestamp === lastRenderedTimestamp) {
+            startIndex = i + 1;
+            break;
+          }
+        }
+      }
+
+      // If we found a match, append only new logs.
+      // If UI is empty or state was reset (no match), do a full but efficient re-render.
+      if (startIndex > 0 || (existingLogs.length === 0 && state.logs.length > 0)) {
+        for (let i = startIndex; i < state.logs.length; i++) {
+          appendLog(state.logs[i], i < state.logs.length - 1);
+        }
+      } else if (startIndex === 0 && existingLogs.length > 0) {
+        // Fallback for edge cases (e.g. logs cleared but UI not)
+        logsDiv.innerHTML = '';
+        state.logs.forEach((l, i) => appendLog(l, i < state.logs.length - 1));
+      }
     }
   }
 
