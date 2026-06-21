@@ -35,8 +35,20 @@ function log(message) {
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce storage writes to 500ms
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +86,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -107,6 +119,7 @@ async function startOrchestration(goal) {
   }
   
   state.brainTabId = tabs[0].id;
+  saveState(true);
   
   const prompt = `You are the Central Command (CC) of a cutting-edge browser agency. Your goal is: ${goal}.
 You oversee the deployment and communications between chunked sequences established by the puppet-side of the extension.
@@ -180,7 +193,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true);
     return;
   }
 

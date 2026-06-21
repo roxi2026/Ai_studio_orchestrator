@@ -73,6 +73,29 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Incremental Log Rendering Helper
+  function appendLog(message) {
+    const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = time;
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' ' + message));
+
+    logsDiv.appendChild(entry);
+
+    // Keep 50 entries cap
+    while (logsDiv.childNodes.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +113,18 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Update
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentCount = logsDiv.querySelectorAll('.oo-log-entry').length;
+      if (currentCount === 0 || state.logs.length < currentCount) {
+        // Full re-render if empty or state was reset
+        logsDiv.innerHTML = '';
+        state.logs.forEach(l => appendLog(l));
+      } else if (state.logs.length > currentCount) {
+        // Append only new logs
+        const newLogs = state.logs.slice(currentCount);
+        newLogs.forEach(l => appendLog(l));
+      }
     }
   }
 
