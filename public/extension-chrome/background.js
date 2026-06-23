@@ -23,6 +23,7 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Track total logs for incremental rendering synchronization
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
@@ -31,12 +32,30 @@ let state = {
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
-  saveState();
+  saveState(); // Log events are frequent, so they use the debounced saveState
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+/**
+ * Saves state to chrome.storage.local.
+ * Implements a 500ms debounce to minimize disk I/O during frequent log events.
+ * @param {boolean} immediate - If true, saves immediately without debouncing.
+ */
+function saveState(immediate = false) {
+  if (saveTimeout) clearTimeout(saveTimeout);
+
+  const performSave = () => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  };
+
+  if (immediate) {
+    performSave();
+  } else {
+    saveTimeout = setTimeout(performSave, 500);
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +93,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true); // Force immediate save for critical state change
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true); // Force immediate save for critical state change
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,6 +115,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -180,7 +200,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true); // Immediate save on completion
     return;
   }
 
