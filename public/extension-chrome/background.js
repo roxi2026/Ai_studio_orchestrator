@@ -35,8 +35,20 @@ function log(message) {
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+// Performance Evolution #2: Debounce storage persistence to reduce disk I/O
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Batch updates every 500ms
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +86,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true); // Immediate save for critical state change
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true); // Immediate save for critical state change
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -102,7 +114,7 @@ async function startOrchestration(goal) {
   if (tabs.length === 0) {
     log('Error: AI Studio tab not found.');
     state.status = 'Error';
-    saveState();
+    saveState(true); // Immediate save
     return;
   }
   
@@ -180,7 +192,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true); // Immediate save on completion
     return;
   }
 
