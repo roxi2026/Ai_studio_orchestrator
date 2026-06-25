@@ -23,20 +23,43 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (saveTimeout) clearTimeout(saveTimeout);
+
+  if (immediate) {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce to 500ms
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
+
   saveState();
+  broadcastToAIStudio({ type: 'LOG_EVENT', message, totalLogs: state.totalLogs });
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+async function broadcastToAIStudio(msg) {
+  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  tabs.forEach(tab => {
+    chrome.tabs.sendMessage(tab.id, msg).catch(() => {}); // Ignore errors for inactive tabs
+  });
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +119,10 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+  saveState(true);
+
+  broadcastToAIStudio({ type: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -180,7 +207,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true);
     return;
   }
 

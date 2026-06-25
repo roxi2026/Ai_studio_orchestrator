@@ -13,6 +13,10 @@
     // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
     const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
     
+    // Performance: Only listen if it's a relevant AI Studio WebSocket
+    const isRelevant = url.includes('aistudio.google.com') || url.includes('executor') || url.includes('reviewer');
+    if (!isRelevant) return ws;
+
     ws.addEventListener('message', function(event) {
       // Forward the intercepted message to the content script
       window.postMessage({
@@ -36,8 +40,13 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      const url = xhr.responseURL;
+      // Performance: Filter out irrelevant requests immediately
+      const isRelevant = url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer');
+      if (!isRelevant) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,12 +69,25 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Performance: Filter out irrelevant requests immediately
+    const urlInput = args[0];
+    let url = '';
+    if (typeof urlInput === 'string') {
+      url = urlInput;
+    } else if (urlInput instanceof URL) {
+      url = urlInput.href;
+    } else if (urlInput instanceof Request) {
+      url = urlInput.url;
+    }
+
+    const isRelevant = url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer');
+    if (!isRelevant) return response;
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
+      // Determine which pane this fetch belongs to
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
