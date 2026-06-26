@@ -36,8 +36,16 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      // Bolt: Filter irrelevant requests early to save main thread and memory
+      const url = xhr.responseURL;
+      const isAIStudioApi = url.includes('aistudio.google.com') &&
+                           (url.includes('v1beta') || url.includes('generateContent') ||
+                            url.includes('executor') || url.includes('reviewer'));
+
+      if (!isAIStudioApi) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,13 +68,20 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Bolt: Normalize URL and filter irrelevant requests before cloning response
+    const urlStr = args[0] instanceof Request ? args[0].url : String(args[0]);
+    const isAIStudioApi = urlStr.includes('aistudio.google.com') &&
+                         (urlStr.includes('v1beta') || urlStr.includes('generateContent') ||
+                          urlStr.includes('executor') || urlStr.includes('reviewer'));
+
+    if (!isAIStudioApi) return response;
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
