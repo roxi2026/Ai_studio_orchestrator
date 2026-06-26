@@ -23,6 +23,7 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for efficient UI updates
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
@@ -31,12 +32,28 @@ let state = {
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+/**
+ * Persists the current state to chrome.storage.local.
+ * @param {boolean} immediate - If true, saves immediately instead of debouncing.
+ */
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce to batch frequent log updates
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -47,7 +64,7 @@ chrome.storage.local.get(['orchestratorState'], (result) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.url && tab.url.includes('aistudio.google.com')) {
     state.brainTabId = tabId;
-    saveState();
+    saveState(true); // Immediate save for tab association
     
     // Auto-activate the in-page UI
     chrome.tabs.sendMessage(tabId, { action: 'AUTO_ACTIVATE', state });
@@ -56,7 +73,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (state.pendingPrompt) {
       const prompt = state.pendingPrompt;
       state.pendingPrompt = null;
-      saveState();
+      saveState(true); // Immediate save for prompt clear
       
       log('Session handoff complete. Injecting prompt in 3 seconds...');
       setTimeout(() => {
@@ -69,17 +86,21 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // --- Central Command (CC) Engine ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'KEEPALIVE') return;
+  if (message.action === 'LOG_EVENT') {
+    log(message.message);
+    return;
+  }
   if (message.action === 'START_ORCHESTRATION') startOrchestration(message.goal);
   if (message.action === 'STOP_ORCHESTRATION') {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,13 +117,14 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
   if (tabs.length === 0) {
     log('Error: AI Studio tab not found.');
     state.status = 'Error';
-    saveState();
+    saveState(true);
     return;
   }
   
@@ -180,7 +202,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true);
     return;
   }
 
