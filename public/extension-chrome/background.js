@@ -23,24 +23,58 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+// --- Performance-Optimized Broadcasting ---
+function broadcastToAIStudio(msg) {
+  // Broadcast to extension runtime (popups, side panels)
+  chrome.runtime.sendMessage(msg).catch(() => {});
+
+  // Broadcast to AI Studio tabs
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+    });
+  });
+}
+
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++; // Increment monotonic counter
   if (state.logs.length > 50) state.logs.shift();
+
+  // Real-time log event for responsive UI without full state polling
+  broadcastToAIStudio({ type: 'LOG_EVENT', message, totalLogs: state.totalLogs });
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+// --- Debounced Storage Persistence ---
+let saveTimeout;
+function saveState(immediate = false) {
+  if (immediate) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+  if (saveTimeout) return;
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce to reduce disk I/O
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Ensure totalLogs exists for legacy state migrations
+    if (state.totalLogs === undefined) state.totalLogs = state.logs.length;
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -79,7 +113,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true); // Force immediate save for critical user action
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,6 +130,8 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+  broadcastToAIStudio({ type: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
