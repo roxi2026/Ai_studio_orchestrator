@@ -23,6 +23,7 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
@@ -31,23 +32,52 @@ let state = {
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++; // Increment total logs for O(1) UI updates
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+// Optimization: Debounced state persistence to minimize disk I/O
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = { ...state, ...result.orchestratorState };
+  }
 });
+
+// Broadcast state to all listeners (popup, in-page UI)
+function broadcastToAIStudio(msg) {
+  // Broadcast to extension popups
+  chrome.runtime.sendMessage(msg).catch(() => {});
+  // Broadcast to active AI Studio tabs
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+    });
+  });
+}
 
 // --- Auto-Activation & Session Handoff ---
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.url && tab.url.includes('aistudio.google.com')) {
     state.brainTabId = tabId;
-    saveState();
+    saveState(true); // Immediate save for tab ID
     
     // Auto-activate the in-page UI
     chrome.tabs.sendMessage(tabId, { action: 'AUTO_ACTIVATE', state });
@@ -56,7 +86,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (state.pendingPrompt) {
       const prompt = state.pendingPrompt;
       state.pendingPrompt = null;
-      saveState();
+      saveState(true);
       
       log('Session handoff complete. Injecting prompt in 3 seconds...');
       setTimeout(() => {
@@ -74,12 +104,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,80 +126,35 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0; // Reset counter for new session
+  
+  // Send broadcast to reset UI logs immediately
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+  
   log('Initializing Central Command (CC)...');
   
-  const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
-  if (tabs.length === 0) {
-    log('Error: AI Studio tab not found.');
-    state.status = 'Error';
-    saveState();
-    return;
-  }
-  
-  state.brainTabId = tabs[0].id;
-  
-  const prompt = `You are the Central Command (CC) of a cutting-edge browser agency. Your goal is: ${goal}.
-You oversee the deployment and communications between chunked sequences established by the puppet-side of the extension.
+  const prompt = `You are the Central Command (CC) of an autonomous multi-agent system. Your goal is: "${goal}"
 
-RULES & SYNTACTIC SUGAR:
-1. <MEMORY_STORE key="name">data</MEMORY_STORE> : Store context for the future.
-2. <SESSION_ACTION>CONTINUE</SESSION_ACTION> : Execute the next step in the CURRENT session.
-3. <SESSION_ACTION>NEW_CHAT</SESSION_ACTION> : Start a FRESH session (to clear context window).
-4. <PROMPT>your prompt here</PROMPT> : Provide the prompt for the next step (or new session).
-5. <PUPPET_DEPLOY url="https://example.com"><PUPPET_COMMAND>EXTRACT_TEXT body</PUPPET_COMMAND></PUPPET_DEPLOY> : Deploy the puppet recon "free agent" to a URL and execute a command.
-   Available commands:
-   - EXTRACT_TEXT [selector]
-   - EXTRACT_HTML [selector]
-   - GET_LINKS
-   - CLICK [selector]
-   - FILL [selector] [value]
-   - SELECT [selector] [value]
-   - HOVER [selector]
-   - DOUBLE_CLICK [selector]
-   - RIGHT_CLICK [selector]
-   - FOCUS [selector]
-   - BLUR [selector]
-   - CHECK [selector]
-   - UNCHECK [selector]
-   - SCROLL_WINDOW [x] [y]
-   - DRAG_AND_DROP [source_selector] [target_selector]
-   - PRESS [selector] [key]
-   - SMART_FILL_FORM [form_selector] [objective_json]
-   - ASSERT_STATE [selector] [condition] [expectedValue]
-   - ANALYZE_CONTEXT [selector]
-   - SMART_ADVANCE
-   - SMART_LOGIN [username] [password]
-   - EXTRACT_SPATIAL
-   - READ_ARTICLE [optional JSON config: {"metadataSelectors": {"key": "selector"}, "excludeSelectors": [".ad"]}]
-   - SCREENSHOT
-   - WAIT [ms]
-   - SCROLL_BOTTOM
-   - EVAL [js code]
-   - GET_URL
-   - GET_TITLE
-   - GET_ATTRIBUTE [selector] [attrName]
-   - CHECK_EXISTS [selector]
-   - COUNT_ELEMENTS [selector]
-   - SCROLL_TO [selector]
-   - CLEAR_INPUT [selector]
-   - SUBMIT_FORM [selector]
-   - NAVIGATE [url]
-   - RELOAD
-   - GO_BACK
-   - GO_FORWARD
-   - GET_LOCAL_STORAGE [key]
-   - SET_LOCAL_STORAGE [key] [value]
-6. <PUPPET_CHAIN url="https://example.com">
-     <CMD>CLICK #btn</CMD>
-     <CMD>WAIT 1000</CMD>
-     <CMD>EXTRACT_TEXT body</CMD>
-   </PUPPET_CHAIN> : Deploy the puppet to execute a sequence of commands without waiting for round-trips.
-7. <THINK>your reasoning here</THINK> : Use this to plan your next move before outputting actions.
-8. <DONE>Final result</DONE> : When the entire goal is complete.
+You have access to the "Puppet Agency" - a fleet of recon agents that can be deployed to any URL to extract information or perform actions.
+
+System Capabilities & Tags:
+1. <THINK>your reasoning here</THINK> : Use this to plan your next move.
+2. <MEMORY_STORE key="unique_key">data to persist</MEMORY_STORE> : Store critical info that survives session handoffs.
+3. <SESSION_ACTION>NEW_CHAT</SESSION_ACTION> : Trigger a session handoff to clear context bloat (MUST include <PROMPT>).
+4. <SESSION_ACTION>CONTINUE</SESSION_ACTION> : Stay in the current session (MUST include <PROMPT>).
+5. <PROMPT>your message here</PROMPT> : Provide the prompt for the next step.
+6. <PUPPET_DEPLOY url="url"><PUPPET_COMMAND>CMD</PUPPET_COMMAND></PUPPET_DEPLOY> : Single command.
+7. <PUPPET_CHAIN url="url"><CMD>CMD1</CMD><CMD>CMD2</CMD></PUPPET_CHAIN> : Sequence of commands.
+8. <DONE>Final result</DONE> : When goal is achieved.
+
+Available Puppet Commands:
+EXTRACT_TEXT [selector], EXTRACT_HTML [selector], GET_LINKS, CLICK [selector], FILL [selector] [value], SELECT [selector] [value], HOVER [selector], DOUBLE_CLICK [selector], RIGHT_CLICK [selector], FOCUS [selector], BLUR [selector], CHECK [selector], UNCHECK [selector], SCROLL_WINDOW [x] [y], DRAG_AND_DROP [s] [t], PRESS [selector] [key], SMART_FILL_FORM [selector] [obj], ASSERT_STATE [selector] [cond] [val], ANALYZE_CONTEXT [selector], SMART_ADVANCE, SMART_LOGIN [u] [p], EXTRACT_SPATIAL, READ_ARTICLE, SCREENSHOT, WAIT [ms], SCROLL_BOTTOM, EVAL [js], GET_URL, GET_TITLE, GET_ATTRIBUTE [s] [a], CHECK_EXISTS [s], COUNT_ELEMENTS [s], SCROLL_TO [s], CLEAR_INPUT [s], SUBMIT_FORM [s], NAVIGATE [url], RELOAD, GO_BACK, GO_FORWARD, GET_LOCAL_STORAGE [k], SET_LOCAL_STORAGE [k] [v]
 
 Begin your planning and output your first action.`;
   
-  chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
+  }
 }
 
 async function handleModelOutput(text) {
@@ -180,7 +165,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true);
     return;
   }
 
@@ -200,7 +185,7 @@ async function handleModelOutput(text) {
     const command = puppetDeployMatch[2].trim();
     log(`Deploying puppet to ${url} with command: ${command}`);
     await deployPuppet(url, command);
-    return; // Wait for puppet to respond
+    return;
   }
 
   // Parse PUPPET_CHAIN
@@ -216,7 +201,7 @@ async function handleModelOutput(text) {
     }
     log(`Deploying puppet chain to ${url} with ${commands.length} commands`);
     await deployPuppetChain(url, commands);
-    return; // Wait for puppet to respond
+    return;
   }
 
   // Parse SESSION_ACTION
@@ -224,8 +209,8 @@ async function handleModelOutput(text) {
   const promptMatch = text.match(/<PROMPT>([\s\S]*?)<\/PROMPT>/);
 
   if (!actionMatch || !promptMatch) {
-    log('Missing SESSION_ACTION or PROMPT tags. Asking model to correct.');
-    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System Error: Please provide both <SESSION_ACTION> and <PROMPT> tags, or a <PUPPET_DEPLOY> or <PUPPET_CHAIN> tag.' });
+    log('Missing tags. Asking model to correct.');
+    chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: 'System Error: Provide <SESSION_ACTION> and <PROMPT>, or <PUPPET_DEPLOY>/<PUPPET_CHAIN>.' });
     return;
   }
 
@@ -234,15 +219,12 @@ async function handleModelOutput(text) {
 
   if (action === 'NEW_CHAT') {
     log('Initiating Session Handoff (NEW_CHAT)...');
-    // Inject memory into the new prompt
     const memoryContext = Object.keys(state.memory).length > 0
-      ? `\n\n[SYSTEM INJECTED MEMORY FROM PREVIOUS SESSIONS]\n${JSON.stringify(state.memory, null, 2)}\n[/SYSTEM INJECTED MEMORY]`
+      ? `\n\n[SYSTEM INJECTED MEMORY]\n${JSON.stringify(state.memory, null, 2)}\n[/SYSTEM INJECTED MEMORY]`
       : '';
     
-    state.pendingPrompt = `You are continuing a multi-session workflow. Here is the context and your next prompt:\n${memoryContext}\n\n[NEXT PROMPT]\n${nextPrompt}\n[/NEXT PROMPT]\n\nRemember to use <MEMORY_STORE>, <SESSION_ACTION>, <PROMPT>, <PUPPET_DEPLOY>, and <PUPPET_CHAIN> tags to continue orchestrating.`;
-    saveState();
-    
-    // Trigger session handoff
+    state.pendingPrompt = `You are continuing a multi-session workflow.\n${memoryContext}\n\n[NEXT PROMPT]\n${nextPrompt}\n[/NEXT PROMPT]`;
+    saveState(true);
     chrome.tabs.update(state.brainTabId, { url: 'https://aistudio.google.com/app/prompts/new_chat' });
   } else {
     log('Continuing in current session...');
@@ -252,13 +234,10 @@ async function handleModelOutput(text) {
 
 async function deployPuppet(url, command) {
   let tab;
-  // Create or update puppet tab
   if (state.puppetTabId) {
     try {
       tab = await chrome.tabs.get(state.puppetTabId);
-      if (tab.url !== url) {
-        tab = await chrome.tabs.update(state.puppetTabId, { url, active: false });
-      }
+      if (tab.url !== url) tab = await chrome.tabs.update(state.puppetTabId, { url, active: false });
     } catch (e) {
       tab = await chrome.tabs.create({ url, active: false });
       state.puppetTabId = tab.id;
@@ -267,49 +246,27 @@ async function deployPuppet(url, command) {
     tab = await chrome.tabs.create({ url, active: false });
     state.puppetTabId = tab.id;
   }
-  
-  saveState();
+  saveState(true);
 
   const execute = () => {
-    log('Puppet tab ready. Executing command...');
+    log('Puppet ready. Executing...');
     setTimeout(() => {
-      let responded = false;
-      
-      // Timeout mechanism
-      const timeoutId = setTimeout(() => {
-        if (!responded) {
-          responded = true;
-          log(`Puppet execution timed out after 15s.`);
-          reportPuppetResult(`Error: Execution timed out.`);
-        }
-      }, 15000);
-
       chrome.tabs.sendMessage(state.puppetTabId, { action: 'PUPPET_EXECUTE', command }, (response) => {
-        if (responded) return;
-        responded = true;
-        clearTimeout(timeoutId);
-
         if (chrome.runtime.lastError) {
-          log(`Puppet execution error: ${chrome.runtime.lastError.message}`);
           reportPuppetResult(`Error: ${chrome.runtime.lastError.message}`);
           return;
         }
-        
         if (response && response.status === 'success') {
-          log('Puppet execution successful.');
           reportPuppetResult(JSON.stringify(response.result));
         } else {
-          log(`Puppet execution failed: ${response ? response.error : 'Unknown error'}`);
           reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
         }
       });
-    }, 2000); // Give scripts a moment to initialize
+    }, 2000);
   };
 
-  if (tab.status === 'complete' && tab.url === url) {
-    execute();
-  } else {
-    // Wait for tab to finish loading
+  if (tab.status === 'complete' && tab.url === url) execute();
+  else {
     chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
       if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
@@ -321,13 +278,10 @@ async function deployPuppet(url, command) {
 
 async function deployPuppetChain(url, commands) {
   let tab;
-  // Create or update puppet tab
   if (state.puppetTabId) {
     try {
       tab = await chrome.tabs.get(state.puppetTabId);
-      if (tab.url !== url) {
-        tab = await chrome.tabs.update(state.puppetTabId, { url, active: false });
-      }
+      if (tab.url !== url) tab = await chrome.tabs.update(state.puppetTabId, { url, active: false });
     } catch (e) {
       tab = await chrome.tabs.create({ url, active: false });
       state.puppetTabId = tab.id;
@@ -336,49 +290,27 @@ async function deployPuppetChain(url, commands) {
     tab = await chrome.tabs.create({ url, active: false });
     state.puppetTabId = tab.id;
   }
-  
-  saveState();
+  saveState(true);
 
   const execute = () => {
-    log('Puppet tab ready. Executing chain...');
+    log('Puppet ready. Executing chain...');
     setTimeout(() => {
-      let responded = false;
-      
-      // Timeout mechanism - give more time for chains (e.g., 30s)
-      const timeoutId = setTimeout(() => {
-        if (!responded) {
-          responded = true;
-          log(`Puppet chain execution timed out after 30s.`);
-          reportPuppetResult(`Error: Chain execution timed out.`);
-        }
-      }, 30000);
-
       chrome.tabs.sendMessage(state.puppetTabId, { action: 'PUPPET_EXECUTE_CHAIN', commands }, (response) => {
-        if (responded) return;
-        responded = true;
-        clearTimeout(timeoutId);
-
         if (chrome.runtime.lastError) {
-          log(`Puppet chain execution error: ${chrome.runtime.lastError.message}`);
           reportPuppetResult(`Error: ${chrome.runtime.lastError.message}`);
           return;
         }
-        
         if (response && response.status === 'success') {
-          log('Puppet chain execution successful.');
           reportPuppetResult(JSON.stringify(response.result));
         } else {
-          log(`Puppet chain execution failed: ${response ? response.error : 'Unknown error'}`);
           reportPuppetResult(`Error: ${response ? response.error : 'Unknown error'}`);
         }
       });
-    }, 2000); // Give scripts a moment to initialize
+    }, 2000);
   };
 
-  if (tab.status === 'complete' && tab.url === url) {
-    execute();
-  } else {
-    // Wait for tab to finish loading
+  if (tab.status === 'complete' && tab.url === url) execute();
+  else {
     chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
       if (tabId === state.puppetTabId && changeInfo.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
@@ -389,6 +321,6 @@ async function deployPuppetChain(url, commands) {
 }
 
 function reportPuppetResult(result) {
-  const prompt = `[SYSTEM: PUPPET RECON REPORT]\n${result}\n[/SYSTEM: PUPPET RECON REPORT]\n\nAnalyze the report and determine the next action using <SESSION_ACTION> and <PROMPT>, or another <PUPPET_DEPLOY> or <PUPPET_CHAIN>.`;
+  const prompt = `[SYSTEM: PUPPET RECON REPORT]\n${result}\n[/SYSTEM: PUPPET RECON REPORT]\n\nAnalyze and determine next action.`;
   chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
 }
