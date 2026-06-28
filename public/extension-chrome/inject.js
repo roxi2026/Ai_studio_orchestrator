@@ -1,20 +1,23 @@
 // inject.js - Injected into the main world of AI Studio to intercept network requests
 
 (function() {
-  console.log('[CC] Main world script injected. Intercepting network requests...');
+  console.log('[CC] Main world script injected.');
+
+  // Optimization: Only intercept relevant AI Studio APIs
+  const RELEVANT_PATHS = ['executor', 'reviewer', 'v1beta', 'generateContent'];
+
+  function isRelevant(url) {
+    const urlStr = String(url);
+    return RELEVANT_PATHS.some(path => urlStr.includes(path));
+  }
 
   // --- WebSocket Interception ---
   const OriginalWebSocket = window.WebSocket;
-  
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
-    
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
     const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
     
     ws.addEventListener('message', function(event) {
-      // Forward the intercepted message to the content script
       window.postMessage({
         source: 'ORCHESTRATOR_INJECT',
         type: 'WS_MESSAGE',
@@ -22,24 +25,18 @@
         payload: event.data
       }, '*');
     });
-    
     return ws;
   };
-  
-  // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
-  
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
-    
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      if (!isRelevant(xhr.responseURL)) return;
       
-      // Forward the intercepted response to the content script
+      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       window.postMessage({
         source: 'ORCHESTRATOR_INJECT',
         type: 'XHR_RESPONSE',
@@ -47,52 +44,40 @@
         payload: xhr.responseText
       }, '*');
     });
-    
     return xhr;
   };
-  
-  // Copy prototype to ensure compatibility
   window.XMLHttpRequest.prototype = OriginalXHR.prototype;
 
   // --- Fetch Interception ---
   const originalFetch = window.fetch;
-  
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
-    
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+
+    if (isRelevant(url)) {
+      // Optimization: Only clone and read body if relevant
+      const clonedResponse = response.clone();
+      clonedResponse.text().then(text => {
+        const pane = String(url).includes('executor') ? 'executor' : (String(url).includes('reviewer') ? 'reviewer' : 'unknown');
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {});
+    }
     
     return response;
   };
 
-  // --- React Fiber Hook Simulation ---
-  // Inject initialization script before main application bundle executes to capture commit events
-  // This allows reading conversational context directly from memory pool
+  // React Fiber Hook Simulation
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true,
     inject: function(renderer) {
-      console.log('[CC] React Fiber renderer injected:', renderer);
-      // Hook into renderer commit events to read state object selectors
+      console.log('[CC] React Fiber renderer injected.');
     },
-    onCommitFiberRoot: function(rendererID, root, priorityLevel) {
-      // Read current conversational context directly from application's memory pool
-      // Map state object selectors to identify variables controlling temperature limits, active model selection, etc.
-    },
+    onCommitFiberRoot: function(rendererID, root, priorityLevel) {},
     onCommitFiberUnmount: function() {}
   };
 

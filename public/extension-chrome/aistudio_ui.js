@@ -26,7 +26,7 @@
       <div class="oo-content">
         <div class="oo-input-group">
           <label class="oo-label">Strategic Objective</label>
-          <textarea id="oo-goal-input" class="oo-textarea" placeholder="E.g., Research the latest AI news. Deploy puppet agents to extract text from tech blogs, summarize them, and start a new session for each summary..."></textarea>
+          <textarea id="oo-goal-input" class="oo-textarea" placeholder="E.g., Research the latest AI news..."></textarea>
         </div>
         <div class="oo-actions">
           <button id="oo-start-btn" class="oo-btn oo-btn-primary">
@@ -45,7 +45,7 @@
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
           <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
+            <div class="oo-log-entry"><span class="oo-log-time">System</span> Ready.</div>
           </div>
         </div>
       </div>
@@ -69,62 +69,99 @@
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
-  // Toggle Logic
-  minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
-  maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
+  let lastRenderedTotalLogs = 0;
 
-  // State Management
-  function updateUI(state) {
-    if (!state) return;
-    
-    statusText.textContent = state.status;
-    statusDot.className = 'oo-status-dot';
-    
-    if (state.status === 'Running') {
-      statusDot.classList.add('active');
-    } else if (state.status === 'Error') {
-      statusDot.classList.add('error');
+  function appendLog(message, skipScroll = false) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' ' + message));
+
+    logsDiv.appendChild(entry);
+
+    // Maintain sliding window in UI
+    if (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
     }
 
-    if (state.goal && !goalInput.value) {
-      goalInput.value = state.goal;
-    }
-
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    if (!skipScroll) {
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   }
 
-  // Fetch initial state
+  // Optimization: Incremental log rendering (O(1))
+  function updateUI(state) {
+    if (!state) return;
+    
+    statusText.textContent = state.status;
+    statusDot.className = 'oo-status-dot' + (state.status === 'Running' ? ' active' : (state.status === 'Error' ? ' error' : ''));
+
+    if (state.goal && !goalInput.value) goalInput.value = state.goal;
+
+    // Handle session reset
+    if (state.totalLogs < lastRenderedTotalLogs) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    if (state.totalLogs > lastRenderedTotalLogs) {
+      const newLogsCount = Math.min(state.totalLogs - lastRenderedTotalLogs, state.logs.length);
+      const newLogs = state.logs.slice(-newLogsCount);
+
+      const fragment = document.createDocumentFragment();
+      newLogs.forEach(l => {
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'oo-log-time';
+        timeSpan.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+        entry.appendChild(timeSpan);
+        entry.appendChild(document.createTextNode(' ' + l));
+        fragment.appendChild(entry);
+      });
+
+      logsDiv.appendChild(fragment);
+
+      // Keep DOM clean
+      while (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
+
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+      lastRenderedTotalLogs = state.totalLogs;
+    }
+  }
+
   chrome.storage.local.get(['orchestratorState'], (res) => {
     if (res.orchestratorState) updateUI(res.orchestratorState);
   });
 
-  // Listen for state changes
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
     }
   });
 
-  // Listen for direct messages (like auto-activate)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      appendLog('Auto-activated.');
+    }
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 
-  // Actions
+  minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
+  maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
+
   startBtn.addEventListener('click', () => {
     const goal = goalInput.value.trim();
     if (!goal) {
@@ -141,13 +178,9 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    appendLog('Memory cleared.');
   });
 
-  // Auto-activate on load
-  setTimeout(() => {
-    root.classList.remove('minimized');
-  }, 500);
+  setTimeout(() => root.classList.remove('minimized'), 500);
 
 })();
