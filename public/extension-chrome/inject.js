@@ -29,6 +29,19 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // --- Network Filtering Helper ---
+  const RELEVANT_HOSTS = ['aistudio.google.com'];
+  const RELEVANT_PATHS = ['generateContent', 'v1beta', 'executor', 'reviewer'];
+
+  function isRelevantRequest(url) {
+    try {
+      const urlString = (url instanceof Request) ? url.url : (url instanceof URL ? url.href : String(url));
+      return RELEVANT_PATHS.some(path => urlString.includes(path));
+    } catch (e) {
+      return false;
+    }
+  }
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,6 +49,8 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      if (!isRelevantRequest(xhr.responseURL)) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
@@ -60,12 +75,14 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+    if (!isRelevantRequest(url)) return response;
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
