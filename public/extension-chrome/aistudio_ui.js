@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,40 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
+    // Incremental Log Rendering (O(1) append vs O(N) re-render)
+    if (state.totalLogs < lastRenderedTotalLogs) {
+      // State was reset (e.g. new orchestration)
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    if (state.logs && state.totalLogs > lastRenderedTotalLogs) {
+      const newLogsCount = Math.min(state.totalLogs - lastRenderedTotalLogs, state.logs.length);
+      const newLogs = state.logs.slice(-newLogsCount);
+
+      const fragment = document.createDocumentFragment();
+      newLogs.forEach((l, index) => {
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'oo-log-time';
+        timeSpan.textContent = time;
+
+        entry.appendChild(timeSpan);
+        entry.appendChild(document.createTextNode(` ${l}`));
+        fragment.appendChild(entry);
+      });
+
+      logsDiv.appendChild(fragment);
+
+      while (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
+
       logsDiv.scrollTop = logsDiv.scrollHeight;
+      lastRenderedTotalLogs = state.totalLogs;
     }
   }
 
