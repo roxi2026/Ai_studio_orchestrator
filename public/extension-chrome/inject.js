@@ -36,8 +36,12 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      // Optimization: Only intercept responses from relevant AI Studio API endpoints
+      const url = xhr.responseURL;
+      const isRelevant = url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer');
+      if (!isRelevant) return;
+
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,22 +64,27 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
+    // Optimization: Only intercept responses from relevant AI Studio API endpoints
+    const urlInput = args[0] instanceof Request ? args[0].url : args[0];
+    const url = typeof urlInput === 'string' ? urlInput : (urlInput instanceof URL ? urlInput.toString() : '');
+    const isRelevant = url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer');
     
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    if (isRelevant) {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      });
+    }
     
     return response;
   };
