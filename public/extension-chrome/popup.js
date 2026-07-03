@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,14 +17,42 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental Render Logs
+    if (state.logs && state.logs.length > 0) {
+      if (state.totalLogs < lastRenderedTotalLogs) {
+        logDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = Math.min(state.totalLogs - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const startIdx = state.logs.length - newLogsCount;
+
+        for (let i = startIdx; i < state.logs.length; i++) {
+          const entry = document.createElement('div');
+          entry.appendChild(document.createTextNode(`> ${state.logs[i]}`));
+          fragment.appendChild(entry);
+        }
+
+        logDiv.appendChild(fragment);
+        logDiv.scrollTop = logDiv.scrollHeight;
+        lastRenderedTotalLogs = state.totalLogs;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
-    memoryDiv.innerHTML = Object.entries(state.memory || {}).map(([k, v]) => 
-      `<div class="memory-item"><span class="memory-key">${k}:</span> ${v}</div>`
-    ).join('') || '<div>No memory stored yet.</div>';
+    memoryDiv.innerHTML = Object.entries(state.memory || {}).map(([k, v]) => {
+      const item = document.createElement('div');
+      item.className = 'memory-item';
+      const keySpan = document.createElement('span');
+      keySpan.className = 'memory-key';
+      keySpan.textContent = `${k}: `;
+      item.appendChild(keySpan);
+      item.appendChild(document.createTextNode(v));
+      return item.outerHTML;
+    }).join('') || '<div>No memory stored yet.</div>';
   }
 
   chrome.storage.local.get(['orchestratorState'], (res) => {
