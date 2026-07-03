@@ -23,6 +23,7 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
@@ -31,12 +32,28 @@ let state = {
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce storage writes to 500ms
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +113,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -180,7 +198,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true); // Critical status change: save immediately
     return;
   }
 
