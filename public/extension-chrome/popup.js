@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  // ⚡ Bolt Optimization: Track last rendered total logs for incremental updates
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +19,30 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // ⚡ Bolt Optimization: O(1) Incremental Rendering for Logs
+    if (state.logs) {
+      if (state.totalLogs < lastRenderedTotalLogs || lastRenderedTotalLogs === 0) {
+        logDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = state.totalLogs - lastRenderedTotalLogs;
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const startIdx = Math.max(0, state.logs.length - newLogsCount);
+        const logsToAppend = state.logs.slice(startIdx);
+
+        logsToAppend.forEach(logText => {
+          const entry = document.createElement('div');
+          entry.textContent = `> ${logText}`;
+          fragment.appendChild(entry);
+        });
+
+        logDiv.appendChild(fragment);
+        logDiv.scrollTop = logDiv.scrollHeight;
+        lastRenderedTotalLogs = state.totalLogs;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
