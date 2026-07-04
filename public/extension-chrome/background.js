@@ -23,20 +23,44 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // ⚡ Bolt Optimization: Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const logEntry = `[${time}] ${message}`;
+  console.log(`[CC] ${logEntry}`);
+
+  state.logs.push(logEntry);
+  state.totalLogs++;
+
+  // Maintain a sliding window of the last 50 logs
   if (state.logs.length > 50) state.logs.shift();
+
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+/**
+ * ⚡ Bolt Optimization: Debounced storage persistence to reduce disk I/O.
+ * @param {boolean} immediate - If true, saves immediately and clears any pending timeout.
+ */
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (saveTimeout) return;
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // 500ms debounce
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +120,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

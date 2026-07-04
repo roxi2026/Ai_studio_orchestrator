@@ -73,6 +73,9 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // ⚡ Bolt Optimization: Track last rendered total logs for incremental updates
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +93,43 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // ⚡ Bolt Optimization: O(1) Incremental Rendering for Logs
+    if (state.logs) {
+      // Check for state reset or initialization
+      if (state.totalLogs < lastRenderedTotalLogs || lastRenderedTotalLogs === 0) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = state.totalLogs - lastRenderedTotalLogs;
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        // Get the most recent logs from the sliding window
+        const startIdx = Math.max(0, state.logs.length - newLogsCount);
+        const logsToAppend = state.logs.slice(startIdx);
+
+        logsToAppend.forEach(logText => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          // Split timestamp from message if present
+          const timeMatch = logText.match(/^\[(.*?)\] (.*)$/);
+          if (timeMatch) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = timeMatch[1];
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(' ' + timeMatch[2]));
+          } else {
+            entry.textContent = logText;
+          }
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = state.totalLogs;
+      }
     }
   }
 
