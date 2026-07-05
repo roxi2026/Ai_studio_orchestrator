@@ -69,6 +69,8 @@
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
+  let lastRenderedTotalLogs = 0;
+
   // Toggle Logic
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
@@ -90,13 +92,43 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Render Logs (O(1) append vs O(N) innerHTML)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
+      // If logs were cleared or reset, clear the container
+      if (state.totalLogs < lastRenderedTotalLogs) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = state.totalLogs - lastRenderedTotalLogs;
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const startIdx = Math.max(0, state.logs.length - newLogsCount);
+        const newEntries = state.logs.slice(startIdx);
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+
+        newEntries.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = time;
+
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(` ${l}`));
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = state.totalLogs;
+
+        // Keep only last 50 in DOM if necessary (matching background.js limit)
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+      }
     }
   }
 
