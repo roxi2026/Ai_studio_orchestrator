@@ -36,8 +36,17 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      // Optimization: Filter out irrelevant XHR requests
+      const url = xhr.responseURL;
+      const isRelevant = url.includes('generateContent') ||
+                         url.includes('v1beta') ||
+                         url.includes('executor') ||
+                         url.includes('reviewer');
+
+      if (!isRelevant) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,12 +69,20 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Determine if this request is relevant to AI Studio APIs we care about
+    const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+    const isRelevant = url.includes('generateContent') ||
+                       url.includes('v1beta') ||
+                       url.includes('executor') ||
+                       url.includes('reviewer');
+
+    if (!isRelevant) return response;
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
