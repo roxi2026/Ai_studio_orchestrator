@@ -23,6 +23,7 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
@@ -31,12 +32,26 @@ let state = {
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce storage writes to 500ms
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +89,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true);
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,6 +111,8 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+  saveState(true);
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -180,7 +197,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+    saveState(true); // Force immediate save on completion
     return;
   }
 
@@ -240,7 +257,7 @@ async function handleModelOutput(text) {
       : '';
     
     state.pendingPrompt = `You are continuing a multi-session workflow. Here is the context and your next prompt:\n${memoryContext}\n\n[NEXT PROMPT]\n${nextPrompt}\n[/NEXT PROMPT]\n\nRemember to use <MEMORY_STORE>, <SESSION_ACTION>, <PROMPT>, <PUPPET_DEPLOY>, and <PUPPET_CHAIN> tags to continue orchestrating.`;
-    saveState();
+    saveState(true);
     
     // Trigger session handoff
     chrome.tabs.update(state.brainTabId, { url: 'https://aistudio.google.com/app/prompts/new_chat' });
