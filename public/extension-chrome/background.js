@@ -23,20 +23,37 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const formattedMessage = `[${timestamp}] ${message}`;
+  console.log(`[CC] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce to 500ms
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +91,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true); // Save immediately on critical status change
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true); // Save immediately on user action
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,6 +113,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -180,7 +198,7 @@ async function handleModelOutput(text) {
   if (doneMatch) {
     state.status = 'Completed';
     log(`Goal Achieved: ${doneMatch[1].substring(0, 50)}...`);
-    saveState();
+  saveState(true);
     return;
   }
 

@@ -73,6 +73,9 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Incremental UI Rendering State
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +93,40 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Incremental Render Logs
+    if (state.logs) {
+      if (state.totalLogs < lastRenderedTotalLogs) {
+        // State reset (e.g., new orchestration started)
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (state.totalLogs > lastRenderedTotalLogs) {
+        const fragment = document.createDocumentFragment();
+        // Calculate how many new logs to append from the end of state.logs
+        const newLogsCount = Math.min(state.totalLogs - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(-newLogsCount);
+
+        newLogs.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const timestampMatch = l.match(/^\[(\d{2}:\d{2}:\d{2})\]/);
+          if (timestampMatch) {
+            const time = timestampMatch[1];
+            const content = l.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*/, '');
+            entry.innerHTML = `<span class="oo-log-time">${time}</span> `;
+            entry.appendChild(document.createTextNode(content));
+          } else {
+            entry.appendChild(document.createTextNode(l));
+          }
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = state.totalLogs;
+      }
     }
   }
 
