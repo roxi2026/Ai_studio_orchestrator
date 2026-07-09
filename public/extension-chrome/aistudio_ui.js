@@ -73,7 +73,34 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
-  // State Management
+  // Performance-focused Incremental UI Rendering
+  let lastRenderedTotalLogs = 0;
+
+  function appendLog(message, skipScroll = false) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    // Background script now pre-formats logs with [HH:MM:SS]
+    // If it's a legacy log or system log without [], we'll handle it gracefully
+    if (message.startsWith('[')) {
+      const timeEnd = message.indexOf(']');
+      const time = message.substring(1, timeEnd);
+      const text = message.substring(timeEnd + 2);
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = time;
+
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(' ' + text));
+    } else {
+      entry.textContent = message;
+    }
+
+    logsDiv.appendChild(entry);
+    if (!skipScroll) logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +117,36 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // O(1) Incremental Rendering Logic
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Check for state reset (e.g. orchestration restarted)
+      if (state.totalLogs < lastRenderedTotalLogs) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (state.totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(state.totalLogs - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(-newLogsCount);
+
+        if (lastRenderedTotalLogs === 0) {
+          // Initial render: Batch append to avoid layout thrashing
+          const fragment = document.createDocumentFragment();
+          newLogs.forEach(l => {
+            const entry = document.createElement('div');
+            entry.className = 'oo-log-entry';
+            entry.textContent = l; // Simplified for initial batch
+            fragment.appendChild(entry);
+          });
+          logsDiv.appendChild(fragment);
+        } else {
+          // Incremental updates
+          newLogs.forEach(l => appendLog(l, true));
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = state.totalLogs;
+      }
     }
   }
 
