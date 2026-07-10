@@ -23,20 +23,39 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for O(1) UI sync
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (saveTimeout) return;
+
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce storage writes to 500ms
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(message) {
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const logEntry = `[${time}] ${message}`;
+
+  console.log(`[CC] ${logEntry}`);
+  state.logs.push(logEntry);
+  state.totalLogs++;
+
+  if (state.logs.length > 50) state.logs.shift();
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +115,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+
+  // Notify UI to clear logs immediately
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
@@ -391,4 +415,17 @@ async function deployPuppetChain(url, commands) {
 function reportPuppetResult(result) {
   const prompt = `[SYSTEM: PUPPET RECON REPORT]\n${result}\n[/SYSTEM: PUPPET RECON REPORT]\n\nAnalyze the report and determine the next action using <SESSION_ACTION> and <PROMPT>, or another <PUPPET_DEPLOY> or <PUPPET_CHAIN>.`;
   chrome.tabs.sendMessage(state.brainTabId, { action: 'SEND_PROMPT', text: prompt });
+}
+
+// --- Messaging Helpers ---
+function broadcastToAIStudio(message) {
+  // Broadcast to extension popups
+  chrome.runtime.sendMessage(message).catch(() => {});
+
+  // Broadcast to active AI Studio tabs
+  chrome.tabs.query({ url: 'https://aistudio.google.com/*' }, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    });
+  });
 }
