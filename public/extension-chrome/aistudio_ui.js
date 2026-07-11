@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,39 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Incremental Log Rendering (O(1) append instead of O(N) re-render)
+    if (state.totalLogs < lastRenderedTotalLogs) {
+      // State reset or orchestration restart
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    const newLogsCount = state.totalLogs - lastRenderedTotalLogs;
+    if (newLogsCount > 0 && state.logs) {
+      const fragment = document.createDocumentFragment();
+      const logsToAppend = state.logs.slice(-Math.min(newLogsCount, state.logs.length));
+
+      logsToAppend.forEach(l => {
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
+
+        // Extract timestamp if present (formatted as "[HH:MM:SS] message")
+        const timeMatch = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)/);
+        if (timeMatch) {
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = timeMatch[1];
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(' ' + timeMatch[2]));
+        } else {
+          entry.textContent = l;
+        }
+        fragment.appendChild(entry);
+      });
+
+      logsDiv.appendChild(fragment);
       logsDiv.scrollTop = logsDiv.scrollHeight;
+      lastRenderedTotalLogs = state.totalLogs;
     }
   }
 
