@@ -23,20 +23,43 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const formattedMessage = `[${timestamp}] ${message}`;
+
+  console.log(`[CC] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
+  state.totalLogs++;
+
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Debounced state persistence to reduce disk I/O.
+ * @param {boolean} immediate - If true, saves state immediately and clears any pending timeout.
+ */
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = null;
+    chrome.storage.local.set({ orchestratorState: state });
+    return;
+  }
+
+  if (saveTimeout) return;
+  saveTimeout = setTimeout(() => {
+    saveTimeout = null;
+    chrome.storage.local.set({ orchestratorState: state });
+  }, 500); // 500ms debounce
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -74,12 +97,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.status = 'Idle';
     state.pendingPrompt = null;
     log('Orchestration stopped by user.');
-    saveState();
+    saveState(true); // Immediate save for user actions
   }
   if (message.action === 'CLEAR_MEMORY') {
     state.memory = {};
     log('Memory cleared by user.');
-    saveState();
+    saveState(true); // Immediate save for user actions
   }
   if (message.action === 'MODEL_OUTPUT_COMPLETE') handleModelOutput(message.text);
   
@@ -96,13 +119,14 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
   if (tabs.length === 0) {
     log('Error: AI Studio tab not found.');
     state.status = 'Error';
-    saveState();
+    saveState(true);
     return;
   }
   
