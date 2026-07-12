@@ -28,19 +28,48 @@ let state = {
   pendingPrompt: null
 };
 
+let saveTimeout = null;
+
 function log(message) {
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const formattedLog = `[${timestamp}] ${message}`;
+
   console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  state.logs.push(formattedLog);
   if (state.logs.length > 50) state.logs.shift();
+
+  // Track total logs for incremental UI sync
+  state.totalLogs = (state.totalLogs || 0) + 1;
+
   saveState();
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+/**
+ * Debounced storage persistence to reduce disk I/O.
+ * @param {boolean} immediate - If true, saves immediately (e.g. on critical state change)
+ */
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (!saveTimeout) {
+    saveTimeout = setTimeout(() => {
+      chrome.storage.local.set({ orchestratorState: state });
+      saveTimeout = null;
+    }, 500); // 500ms debounce
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    // Ensure totalLogs exists for legacy state
+    if (state.totalLogs === undefined) state.totalLogs = state.logs.length;
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +125,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0; // Reset monotonic counter
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
