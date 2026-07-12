@@ -74,6 +74,16 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
+  function appendLog(logText) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    entry.textContent = logText;
+    logsDiv.appendChild(entry);
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +100,32 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Rendering (O(1) update)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const totalLogs = state.totalLogs || state.logs.length;
+
+      // If totalLogs decreased, it's likely a reset/startOrchestration
+      if (totalLogs < lastRenderedTotalLogs) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(-newLogsCount);
+
+        const fragment = document.createDocumentFragment();
+        newLogs.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+          entry.textContent = l;
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = totalLogs;
+      }
     }
   }
 
