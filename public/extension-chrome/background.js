@@ -23,20 +23,43 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
-function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
-  saveState();
+// --- Optimized Persistence ---
+let saveTimeout = null;
+function saveState(immediate = false) {
+  if (immediate) {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+    return;
+  }
+
+  if (saveTimeout) return;
+  saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({ orchestratorState: state });
+    saveTimeout = null;
+  }, 500); // Debounce saves to 500ms to reduce disk I/O
 }
 
-function saveState() {
-  chrome.storage.local.set({ orchestratorState: state });
+function log(message) {
+  // Prepend timestamp for better telemetry
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const formattedMessage = `[${timestamp}] ${message}`;
+
+  console.log(`[CC] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
+  state.totalLogs++;
+
+  if (state.logs.length > 50) {
+    state.logs.shift();
+  }
+
+  saveState();
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +119,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+
+  // Clear logs in UI immediately
+  chrome.runtime.sendMessage({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
