@@ -29,13 +29,33 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // --- Filtering Helper ---
+  const isTargetApi = (url) => {
+    if (!url) return false;
+    const urlStr = typeof url === 'string' ? url : (url.url || url.toString());
+    // Only intercept AI Studio API calls to reduce overhead
+    return urlStr.includes('generateContent') ||
+           urlStr.includes('v1beta') ||
+           urlStr.includes('executor') ||
+           urlStr.includes('reviewer');
+  };
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+    let requestUrl = '';
+
+    xhr.open = function(method, url) {
+      requestUrl = url;
+      return originalOpen.apply(this, arguments);
+    };
     
     xhr.addEventListener('load', function() {
+      if (!isTargetApi(requestUrl || xhr.responseURL)) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
@@ -59,13 +79,15 @@
   
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+
+    if (!isTargetApi(url)) return response;
     
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script

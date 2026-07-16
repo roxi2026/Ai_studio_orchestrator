@@ -23,15 +23,23 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental UI rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const logEntry = `[${time}] ${message}`;
+
+  console.log(`[CC] ${logEntry}`);
+  state.logs.push(logEntry);
+  state.totalLogs++;
+
+  // Keep the log history capped at 50 for storage/performance
   if (state.logs.length > 50) state.logs.shift();
+
   saveState();
 }
 
@@ -96,6 +104,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
