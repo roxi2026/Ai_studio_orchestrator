@@ -73,6 +73,8 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,15 +92,68 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Render Logs Incrementally
+    const total = state.totalLogs || 0;
+
+    // Evaluate state resets
+    if (total < lastRenderedTotalLogs) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Check if log container is in its default state (empty or contains default placeholder)
+      // before populating from orchestrator state to prevent duplicate entries
+      if (lastRenderedTotalLogs === 0 && logsDiv.children.length <= 1) {
+        logsDiv.innerHTML = '';
+      }
+
+      const newLogsCount = Math.min(total - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const logsToRender = state.logs.slice(state.logs.length - newLogsCount);
+
+        for (const logText of logsToRender) {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const match = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+          if (match) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = match[1];
+            entry.appendChild(timeSpan);
+
+            const textNode = document.createTextNode(' ' + match[2]);
+            entry.appendChild(textNode);
+          } else {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = 'System';
+            entry.appendChild(timeSpan);
+
+            const textNode = document.createTextNode(' ' + logText);
+            entry.appendChild(textNode);
+          }
+
+          fragment.appendChild(entry);
+        }
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = total;
+
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        // Scroll once after incremental append loop to minimize layout reflows
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
+
+  // Expose updateUI globally for testing and verification
+  window.updateUI = updateUI;
 
   // Fetch initial state
   chrome.storage.local.get(['orchestratorState'], (res) => {

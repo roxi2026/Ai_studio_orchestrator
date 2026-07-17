@@ -15,7 +15,7 @@
       <div class="oo-header">
         <div class="oo-title">
           <svg class="oo-title-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-          God Mode Orchestrator
+          Central Command (CC)
         </div>
         <div class="oo-controls">
           <button class="oo-btn-icon" id="oo-minimize-btn" title="Minimize">
@@ -26,30 +26,26 @@
       <div class="oo-content">
         <div class="oo-input-group">
           <label class="oo-label">Strategic Objective</label>
-          <textarea id="oo-goal-input" class="oo-textarea" placeholder="E.g., Navigate to Wikipedia, search for 'Quantum Computing', and extract the first paragraph..."></textarea>
+          <textarea id="oo-goal-input" class="oo-textarea" placeholder="E.g., Research the latest AI news. Deploy puppet agents to extract text from tech blogs, summarize them, and start a new session for each summary..."></textarea>
         </div>
         <div class="oo-actions">
           <button id="oo-start-btn" class="oo-btn oo-btn-primary">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Initialize Agent
+            Initialize CC
           </button>
           <button id="oo-stop-btn" class="oo-btn oo-btn-danger">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
             Halt
           </button>
-        </div>
-        
-        <div class="oo-input-group">
-          <label class="oo-label">Execution Plan</label>
-          <div id="oo-plan" class="oo-plan-container">
-            <div class="oo-plan-step">Awaiting meta-planning...</div>
-          </div>
+          <button id="oo-clear-mem-btn" class="oo-btn oo-btn-secondary" title="Clear Stored Memory">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
         </div>
 
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
           <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Agent ready and awaiting instructions.</div>
+            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
           </div>
         </div>
       </div>
@@ -67,15 +63,17 @@
   const maximizeBtn = document.getElementById('oo-maximize-btn');
   const startBtn = document.getElementById('oo-start-btn');
   const stopBtn = document.getElementById('oo-stop-btn');
+  const clearMemBtn = document.getElementById('oo-clear-mem-btn');
   const goalInput = document.getElementById('oo-goal-input');
   const logsDiv = document.getElementById('oo-logs');
-  const planDiv = document.getElementById('oo-plan');
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
   // Toggle Logic
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
+
+  let lastRenderedTotalLogs = 0;
 
   // State Management
   function updateUI(state) {
@@ -84,10 +82,8 @@
     statusText.textContent = state.status;
     statusDot.className = 'oo-status-dot';
     
-    if (state.status === 'Executing') {
+    if (state.status === 'Running') {
       statusDot.classList.add('active');
-    } else if (state.status === 'Planning') {
-      statusDot.classList.add('planning');
     } else if (state.status === 'Error') {
       statusDot.classList.add('error');
     }
@@ -96,33 +92,68 @@
       goalInput.value = state.goal;
     }
 
-    // Render Plan
-    if (state.plan && state.plan.length > 0) {
-      planDiv.innerHTML = state.plan.map((step, i) => {
-        let icon = '⏳';
-        let className = 'oo-plan-step';
-        if (i < state.currentStepIndex) {
-          icon = '✅';
-          className += ' completed';
-        } else if (i === state.currentStepIndex && state.status === 'Executing') {
-          icon = '▶️';
-          className += ' active';
-        }
-        return `<div class="${className}"><span>${icon}</span> <span>Step ${i+1}: ${step.description}</span></div>`;
-      }).join('');
-    } else {
-      planDiv.innerHTML = '<div class="oo-plan-step">Awaiting meta-planning...</div>';
+    // Render Logs Incrementally
+    const total = state.totalLogs || 0;
+
+    // Evaluate state resets
+    if (total < lastRenderedTotalLogs) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
 
-    // Render Logs
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Check if log container is in its default state (empty or contains default placeholder)
+      // before populating from orchestrator state to prevent duplicate entries
+      if (lastRenderedTotalLogs === 0 && logsDiv.children.length <= 1) {
+        logsDiv.innerHTML = '';
+      }
+
+      const newLogsCount = Math.min(total - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const logsToRender = state.logs.slice(state.logs.length - newLogsCount);
+
+        for (const logText of logsToRender) {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const match = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+          if (match) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = match[1];
+            entry.appendChild(timeSpan);
+
+            const textNode = document.createTextNode(' ' + match[2]);
+            entry.appendChild(textNode);
+          } else {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = 'System';
+            entry.appendChild(timeSpan);
+
+            const textNode = document.createTextNode(' ' + logText);
+            entry.appendChild(textNode);
+          }
+
+          fragment.appendChild(entry);
+        }
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = total;
+
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        // Scroll once after incremental append loop to minimize layout reflows
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
+
+  // Expose updateUI globally for testing and verification
+  window.updateUI = updateUI;
 
   // Fetch initial state
   chrome.storage.local.get(['orchestratorState'], (res) => {
@@ -161,6 +192,12 @@
 
   stopBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'STOP_ORCHESTRATION' });
+  });
+
+  clearMemBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
+    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
+    logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
   // Auto-activate on load
