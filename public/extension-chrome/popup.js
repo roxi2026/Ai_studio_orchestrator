@@ -6,7 +6,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
+    if (!state) return;
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
         statusDiv.style.background = '#e6f4ea'; statusDiv.style.color = '#137333';
@@ -16,8 +19,47 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Render Logs Incrementally
+    const total = state.totalLogs || 0;
+
+    // Evaluate state resets
+    if (total < lastRenderedTotalLogs) {
+      logDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    if (state.logs && state.logs.length > 0) {
+      if (lastRenderedTotalLogs === 0) {
+        logDiv.innerHTML = '';
+      }
+
+      const newLogsCount = Math.min(total - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const logsToRender = state.logs.slice(state.logs.length - newLogsCount);
+
+        for (const logText of logsToRender) {
+          const entry = document.createElement('div');
+          const match = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+          if (match) {
+            entry.textContent = `> [${match[1]}] ${match[2]}`;
+          } else {
+            entry.textContent = `> ${logText}`;
+          }
+          fragment.appendChild(entry);
+        }
+
+        logDiv.appendChild(fragment);
+        lastRenderedTotalLogs = total;
+
+        while (logDiv.children.length > 50) {
+          logDiv.removeChild(logDiv.firstChild);
+        }
+
+        // Scroll once after incremental append loop to minimize layout reflows
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -25,6 +67,9 @@ document.addEventListener('DOMContentLoaded', () => {
       `<div class="memory-item"><span class="memory-key">${k}:</span> ${v}</div>`
     ).join('') || '<div>No memory stored yet.</div>';
   }
+
+  // Expose updateUI globally for testing and verification
+  window.updateUI = updateUI;
 
   chrome.storage.local.get(['orchestratorState'], (res) => {
     if (res.orchestratorState) updateUI(res.orchestratorState);
