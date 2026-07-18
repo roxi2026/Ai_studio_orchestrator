@@ -1,0 +1,3 @@
+## 2025-07-18 - Log list O(N) innerHTML Rendering & Network Interception Filtering
+**Learning:** In highly active background extensions, rendering sliding window logs using O(N) `innerHTML` on every storage update causes heavy layout thrashing, DOM churn, and high CPU usage. Additionally, cloning and parsing the response body for *every* page fetch/XHR in a content script main-world injector creates significant memory and processing pressure.
+**Action:** Always implement O(1) incremental rendering with monotonic state counters and document fragments. Filter intercepted network requests early based on target URLs/keywords before executing expensive body cloning or text extraction operations.

@@ -6,6 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +18,39 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // O(1) Incremental Rendering of Logs
+    if (state.logs) {
+      const totalLogs = state.totalLogs || 0;
+
+      // If totalLogs reset or is less than what we've rendered, reset container
+      if (totalLogs < lastRenderedTotalLogs || lastRenderedTotalLogs === 0) {
+        logDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        const startIndex = state.logs.length - newLogsCount;
+        const fragment = document.createDocumentFragment();
+
+        for (let i = startIndex; i < state.logs.length; i++) {
+          const l = state.logs[i];
+          const entryDiv = document.createElement('div');
+          entryDiv.appendChild(document.createTextNode('> ' + l));
+          fragment.appendChild(entryDiv);
+        }
+
+        logDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogs;
+
+        // Sliding window cap (50 entries)
+        while (logDiv.children.length > 50) {
+          logDiv.removeChild(logDiv.firstChild);
+        }
+
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
