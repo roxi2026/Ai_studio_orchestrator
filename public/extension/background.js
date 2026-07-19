@@ -25,14 +25,18 @@ let state = {
   currentStepIndex: 0,
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   targetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[Orchestrator] ${message}`);
-  state.logs.push(message);
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const formattedMessage = `[${timestamp}] ${message}`;
+  console.log(`[Orchestrator] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
+  state.totalLogs = (state.totalLogs || 0) + 1;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -88,6 +92,7 @@ async function startOrchestration(goal) {
   state.currentStepIndex = 0;
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Phase 1: Meta-Planning initialized...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
