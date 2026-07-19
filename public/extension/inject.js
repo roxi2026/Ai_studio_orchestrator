@@ -3,25 +3,46 @@
 (function() {
   console.log('[Orchestrator] Main world script injected. Intercepting network requests...');
 
+  // Helper function to safely extract the URL as a string
+  function getUrlString(input) {
+    if (!input) return '';
+    if (typeof input === 'string') return input;
+    if (input instanceof Request) return input.url || '';
+    if (input instanceof URL) return input.href || '';
+    if (typeof input.toString === 'function') return input.toString();
+    return '';
+  }
+
+  // Selective filtering: only intercept specific AI Studio API URLs to minimize performance overhead
+  function shouldInterceptUrl(urlStr) {
+    if (!urlStr) return false;
+    return urlStr.includes('generateContent') ||
+           urlStr.includes('v1beta') ||
+           urlStr.includes('executor') ||
+           urlStr.includes('reviewer');
+  }
+
   // --- WebSocket Interception ---
   const OriginalWebSocket = window.WebSocket;
   
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
+    const urlStr = getUrlString(url);
     
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
-    const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-    
-    ws.addEventListener('message', function(event) {
-      // Forward the intercepted message to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'WS_MESSAGE',
-        pane: pane,
-        payload: event.data
-      }, '*');
-    });
+    if (shouldInterceptUrl(urlStr)) {
+      // Determine which pane this WebSocket belongs to based on URL or request payload
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+      ws.addEventListener('message', function(event) {
+        // Forward the intercepted message to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'WS_MESSAGE',
+          pane: pane,
+          payload: event.data
+        }, '*');
+      });
+    }
     
     return ws;
   };
@@ -36,8 +57,11 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      const urlStr = xhr.responseURL || '';
+      if (!shouldInterceptUrl(urlStr)) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -59,14 +83,18 @@
   
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
+    const urlStr = getUrlString(args[0]);
     
+    if (!shouldInterceptUrl(urlStr)) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -75,6 +103,8 @@
         pane: pane,
         payload: text
       }, '*');
+    }).catch(err => {
+      console.warn('[Orchestrator] Failed to extract text from fetch response:', err);
     });
     
     return response;
