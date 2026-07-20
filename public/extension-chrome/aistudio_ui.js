@@ -73,7 +73,9 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
-  // State Management
+  // State Management & Incremental Log Tracker
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,54 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // O(1) Incremental Rendering of Logs using DocumentFragment & XSS-safe textContent
+    if (state.logs) {
+      // If state logs reset or drift backwards, reset the local count and container
+      if (state.totalLogs < lastRenderedTotalLogs) {
+        lastRenderedTotalLogs = 0;
+        logsDiv.textContent = '';
+      }
+
+      const currentTotalLogs = state.totalLogs || 0;
+      if (currentTotalLogs > lastRenderedTotalLogs) {
+        // Calculate number of logs to append (capped by state.logs length)
+        const newLogsCount = Math.min(currentTotalLogs - lastRenderedTotalLogs, state.logs.length);
+        const startIndex = state.logs.length - newLogsCount;
+        const logsToAppend = state.logs.slice(startIndex);
+
+        if (logsToAppend.length > 0) {
+          const fragment = document.createDocumentFragment();
+
+          logsToAppend.forEach(logLine => {
+            const entryDiv = document.createElement('div');
+            entryDiv.className = 'oo-log-entry';
+
+            // Split timestamp if natively prepended, otherwise let it format normally
+            const timestampMatch = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
+            if (timestampMatch) {
+              const timeSpan = document.createElement('span');
+              timeSpan.className = 'oo-log-time';
+              timeSpan.textContent = timestampMatch[1];
+              entryDiv.appendChild(timeSpan);
+              entryDiv.appendChild(document.createTextNode(' ' + timestampMatch[2]));
+            } else {
+              const timeSpan = document.createElement('span');
+              timeSpan.className = 'oo-log-time';
+              timeSpan.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+              entryDiv.appendChild(timeSpan);
+              entryDiv.appendChild(document.createTextNode(' ' + logLine));
+            }
+
+            fragment.appendChild(entryDiv);
+          });
+
+          // Perform a single O(1) batch layout append
+          logsDiv.appendChild(fragment);
+          logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        lastRenderedTotalLogs = currentTotalLogs;
+      }
     }
   }
 
