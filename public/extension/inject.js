@@ -34,10 +34,25 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+    let requestUrl = '';
+
+    xhr.open = function(method, url, ...rest) {
+      requestUrl = url;
+      return originalOpen.apply(this, [method, url, ...rest]);
+    };
     
     xhr.addEventListener('load', function() {
+      // Performance optimization: Filter intercepts to target relevant AI Studio APIs (O(1) host-based check)
+      const urlStr = String(requestUrl || xhr.responseURL || '');
+      const isTargetUrl = urlStr.includes('generateContent') ||
+                          urlStr.includes('v1beta') ||
+                          urlStr.includes('executor') ||
+                          urlStr.includes('reviewer');
+      if (!isTargetUrl) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,22 +75,38 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Parse the fetch target URL cleanly
+    const rawUrl = args[0] instanceof Request ? args[0].url : args[0];
+    const urlStr = String(rawUrl || '');
+
+    // Performance optimization: Filter intercepts to target relevant AI Studio APIs (O(1) host-based check)
+    // Avoids overhead, cloning, and processing response bodies of non-relevant requests (e.g. static assets, telemetry)
+    const isTargetUrl = urlStr.includes('generateContent') ||
+                        urlStr.includes('v1beta') ||
+                        urlStr.includes('executor') ||
+                        urlStr.includes('reviewer');
+    if (!isTargetUrl) return response;
+
+    try {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(err => {
+        console.warn('[Orchestrator] Failed to read cloned fetch response body:', err);
+      });
+    } catch (e) {
+      console.warn('[Orchestrator] Failed to clone fetch response:', e);
+    }
     
     return response;
   };
