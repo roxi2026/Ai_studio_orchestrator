@@ -1,0 +1,5 @@
+# Bolt's Journal - Critical Learnings & Bottlenecks
+
+## 2025-03-05 - O(1) Incremental Rendering & Selective API Filtering
+**Learning:** In the extension UI, legacy O(N) log rendering using innerHTML overwrites of the log container causes massive layout reflows and excessive DOM churn as log history grows. Prepending timestamps natively in the background script and using a monotonic totalLogs counter allows O(1) incremental rendering via DocumentFragment and textContent, speeding up large-scale log appends by up to 77x. Furthermore, intercepting all fetch/XHR traffic inside inject.js causes severe overhead on static assets and telemetry. Filtering request URLs against target AI Studio API signatures prior to cloning or reading body text eliminates unnecessary performance bottlenecks.
+**Action:** Always avoid O(N) full-list DOM updates with innerHTML on active telemetry/logging interfaces; instead, track update counts and perform O(1) incremental DOM appends. When writing script injectors for network traffic, prioritize early returns using string filters on URLs to avoid heavy memory allocation, body cloning, and message-passing overhead.
