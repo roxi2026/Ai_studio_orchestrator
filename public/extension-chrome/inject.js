@@ -29,6 +29,18 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // --- Target API Filter Utility ---
+  // Optimizes performance by filtering network interceptions to target relevant AI Studio APIs,
+  // completely avoiding clone/text read overhead on static resources and telemetry.
+  const isTargetApi = (url) => {
+    if (!url) return false;
+    const urlString = String(url);
+    return urlString.includes('generateContent') ||
+           urlString.includes('v1beta') ||
+           urlString.includes('executor') ||
+           urlString.includes('reviewer');
+  };
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,8 +48,11 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const url = xhr.responseURL;
+      if (!isTargetApi(url)) return;
+
+      // Determine which pane this XHR belongs to based on request URL
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,13 +75,29 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Determine the URL string safely
+    let urlString = '';
+    if (args[0]) {
+      if (typeof args[0] === 'string') {
+        urlString = args[0];
+      } else if (args[0] instanceof URL) {
+        urlString = args[0].href;
+      } else if (args[0] instanceof Request) {
+        urlString = args[0].url;
+      } else if (typeof args[0] === 'object' && 'url' in args[0]) {
+        urlString = String(args[0].url);
+      }
+    }
+
+    if (!isTargetApi(urlString)) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlString.includes('executor') ? 'executor' : (urlString.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -75,6 +106,8 @@
         pane: pane,
         payload: text
       }, '*');
+    }).catch(err => {
+      console.warn('[CC] Failed to read intercepted fetch response body:', err);
     });
     
     return response;

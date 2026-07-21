@@ -78,6 +78,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -114,13 +116,45 @@
       planDiv.innerHTML = '<div class="oo-plan-step">Awaiting meta-planning...</div>';
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Render Logs - O(1) Incremental Performance Evolution
+    const totalLogs = state.totalLogs || 0;
+
+    // Fallback: full-sync if background state reset or we suffered an overrun/missed logs
+    if (totalLogs < lastRenderedTotalLogs || (totalLogs - lastRenderedTotalLogs) > (state.logs || []).length) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = Math.max(0, totalLogs - (state.logs || []).length);
+    }
+
+    const newLogsCount = totalLogs - lastRenderedTotalLogs;
+    if (newLogsCount > 0 && state.logs) {
+      const startIndex = state.logs.length - newLogsCount;
+      const newLogs = state.logs.slice(startIndex);
+
+      // Batch DOM operations with DocumentFragment to prevent multiple reflows
+      const fragment = document.createDocumentFragment();
+
+      newLogs.forEach(l => {
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
+
+        // Parse native HH:MM:SS timestamp if present in bracket form [12:34:56]
+        const timeMatch = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)/);
+        if (timeMatch) {
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = timeMatch[1];
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(' ' + timeMatch[2]));
+        } else {
+          entry.textContent = l;
+        }
+
+        fragment.appendChild(entry);
+      });
+
+      logsDiv.appendChild(fragment);
       logsDiv.scrollTop = logsDiv.scrollHeight;
+      lastRenderedTotalLogs = totalLogs;
     }
   }
 
@@ -142,8 +176,17 @@
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      // Add a welcome log using DOM operations
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+      timeSpan.textContent = time;
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(' Auto-activated upon entering AI Studio.'));
+
+      logsDiv.appendChild(entry);
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });
