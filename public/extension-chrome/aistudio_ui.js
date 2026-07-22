@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,14 +92,59 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Handle state reset
+    if ((state.totalLogs || 0) < lastRenderedTotalLogs) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
+
+    // Render Logs Incrementally
+    if (state.logs && state.logs.length > 0) {
+      // Check if in default state (contains "ready" message or is empty)
+      const hasReadyMessage = logsDiv.querySelector('.oo-log-entry span.oo-log-time')?.textContent === 'System';
+      if (hasReadyMessage && lastRenderedTotalLogs === 0) {
+        logsDiv.innerHTML = '';
+      }
+
+      const newLogsCount = Math.min((state.totalLogs || 0) - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const startIndex = state.logs.length - newLogsCount;
+        const newLogs = state.logs.slice(startIndex);
+
+        const fragment = document.createDocumentFragment();
+        newLogs.forEach(logText => {
+          const div = document.createElement('div');
+          div.className = 'oo-log-entry';
+
+          const timeMatch = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s(.*)/);
+          if (timeMatch) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = timeMatch[1];
+            div.appendChild(timeSpan);
+            div.appendChild(document.createTextNode(' ' + timeMatch[2]));
+          } else {
+            div.appendChild(document.createTextNode(logText));
+          }
+          fragment.appendChild(div);
+        });
+
+        logsDiv.appendChild(fragment);
+
+        // Enforce 50-entry cap in DOM
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        // Batch the scroll operation to minimize layout reflows
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
+    } else if (state.logs && state.logs.length === 0 && logsDiv.children.length === 0) {
+      // Restore default ready message if no logs are present and container is empty
+      logsDiv.innerHTML = `<div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>`;
+    }
+
+    lastRenderedTotalLogs = state.totalLogs || 0;
   }
 
   // Fetch initial state
@@ -121,6 +168,9 @@
       // Add a welcome log
       logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
       logsDiv.scrollTop = logsDiv.scrollHeight;
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 

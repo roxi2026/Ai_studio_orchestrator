@@ -25,15 +25,19 @@ let state = {
   currentStepIndex: 0,
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   targetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[Orchestrator] ${message}`);
-  state.logs.push(message);
+  const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMessage = `[${timeStr}] ${message}`;
+  console.log(`[Orchestrator] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
   if (state.logs.length > 50) state.logs.shift();
+  state.totalLogs = (state.totalLogs || 0) + 1;
   saveState();
 }
 
@@ -42,8 +46,31 @@ function saveState() {
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    if (state.totalLogs === undefined) {
+      state.totalLogs = state.logs ? state.logs.length : 0;
+    }
+  }
 });
+
+// Helper to broadcast messages to both popups and active tabs
+async function broadcastToAIStudio(message) {
+  chrome.runtime.sendMessage(message, () => {
+    if (chrome.runtime.lastError) { /* ignore */ }
+  });
+
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, message, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+  } catch (e) {
+    // Ignore errors querying tabs
+  }
+}
 
 // --- Auto-Activation & Session Handoff ---
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -88,6 +115,12 @@ async function startOrchestration(goal) {
   state.currentStepIndex = 0;
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+  saveState();
+
+  // Broadcast UI clear signal to popups and injected scripts
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Phase 1: Meta-Planning initialized...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
