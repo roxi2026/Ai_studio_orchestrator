@@ -6,6 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +18,40 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Handle state reset
+    if ((state.totalLogs || 0) < lastRenderedTotalLogs) {
+      logDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    // Render Logs Incrementally
+    if (state.logs && state.logs.length > 0) {
+      const newLogsCount = Math.min((state.totalLogs || 0) - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const startIndex = state.logs.length - newLogsCount;
+        const newLogs = state.logs.slice(startIndex);
+
+        const fragment = document.createDocumentFragment();
+        newLogs.forEach(logText => {
+          const div = document.createElement('div');
+          div.textContent = `> ${logText}`;
+          fragment.appendChild(div);
+        });
+
+        logDiv.appendChild(fragment);
+
+        // Enforce 50-entry cap in DOM
+        while (logDiv.children.length > 50) {
+          logDiv.removeChild(logDiv.firstChild);
+        }
+
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+    } else if (state.logs && state.logs.length === 0) {
+      logDiv.innerHTML = '';
+    }
+
+    lastRenderedTotalLogs = state.totalLogs || 0;
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
@@ -33,6 +67,13 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && changes.orchestratorState) {
       updateUI(changes.orchestratorState.newValue);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'CLEAR_LOGS') {
+      logDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 
