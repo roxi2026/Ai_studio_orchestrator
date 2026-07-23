@@ -25,14 +25,34 @@ let state = {
   currentStepIndex: 0,
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic log counter to facilitate O(1) incremental rendering
   brainTabId: null,
   targetTabId: null,
   pendingPrompt: null
 };
 
+// Helper to broadcast messages to all relevant content scripts and popups
+async function broadcastToAIStudio(message) {
+  try {
+    chrome.runtime.sendMessage(message).catch(() => {});
+  } catch (e) {}
+
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    }
+  } catch (e) {}
+}
+
 function log(message) {
-  console.log(`[Orchestrator] ${message}`);
-  state.logs.push(message);
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMsg = `[${timestamp}] ${message}`;
+  console.log(`[Orchestrator] ${formattedMsg}`);
+
+  state.logs.push(formattedMsg);
+  state.totalLogs = (state.totalLogs || 0) + 1;
+
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -42,7 +62,12 @@ function saveState() {
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    if (state.totalLogs === undefined) {
+      state.totalLogs = state.logs.length;
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -88,6 +113,12 @@ async function startOrchestration(goal) {
   state.currentStepIndex = 0;
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0; // Reset monotonic totalLogs counter for incremental updates
+  saveState();
+
+  // Broadcast CLEAR_LOGS event to all active views (popups and page UIs)
+  await broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Phase 1: Meta-Planning initialized...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
