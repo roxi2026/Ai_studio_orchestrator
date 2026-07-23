@@ -1,0 +1,3 @@
+## 2026-07-23 - Monotonic Log Synchronization & URL Interception Filtering
+**Learning:** Legacy re-rendering of log list via innerHTML on every state change runs in O(N) time and triggers heavy DOM churn, layout reflow, and exposes the app to potential XSS vulnerabilities. Additionally, network interception without filtering clones and processes every background request, slowing down the host application.
+**Action:** Transitioned UI logging to O(1) incremental rendering via DocumentFragment and text nodes, managing log limits with a monotonic counter. Intercept only target AI Studio APIs in inject.js using fast early-exit URL substring checks.

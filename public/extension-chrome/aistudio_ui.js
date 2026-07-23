@@ -73,6 +73,8 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +92,63 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Reset check
+    if (state.totalLogs !== undefined && state.totalLogs < lastRenderedTotalLogs) {
+      logsDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    // Initial log history restoration: check if container is in default state
+    const isDefaultState = logsDiv.children.length === 1 && logsDiv.querySelector('.oo-log-entry')?.textContent.includes('ready and awaiting');
+    if (isDefaultState && state.logs && state.logs.length > 0) {
+      logsDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    // Render Logs incrementally (O(1) updates using DocumentFragment and Text Nodes)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const totalLogs = state.totalLogs !== undefined ? state.totalLogs : state.logs.length;
+      if (totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        if (newLogsCount > 0) {
+          const fragment = document.createDocumentFragment();
+          const startIndex = state.logs.length - newLogsCount;
+          const newLogs = state.logs.slice(startIndex);
+
+          for (const logText of newLogs) {
+            const div = document.createElement('div');
+            div.className = 'oo-log-entry';
+
+            // Extract native HH:MM:SS timestamp with Regex
+            const timeMatch = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+            if (timeMatch) {
+              const span = document.createElement('span');
+              span.className = 'oo-log-time';
+              span.textContent = timeMatch[1];
+              div.appendChild(span);
+              div.appendChild(document.createTextNode(' ' + timeMatch[2]));
+            } else {
+              const span = document.createElement('span');
+              span.className = 'oo-log-time';
+              span.textContent = 'System';
+              div.appendChild(span);
+              div.appendChild(document.createTextNode(' ' + logText));
+            }
+            fragment.appendChild(div);
+          }
+
+          logsDiv.appendChild(fragment);
+
+          // Keep strict 50-entry cap in DOM to avoid infinite growth and memory leaks
+          while (logsDiv.children.length > 50) {
+            logsDiv.removeChild(logsDiv.firstChild);
+          }
+
+          // Optimized: batch scroll operation once after the incremental append loop to minimize layout reflows
+          logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+        lastRenderedTotalLogs = totalLogs;
+      }
     }
   }
 
@@ -112,15 +164,34 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate or clearing logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Prevent duplicate auto-activation entries
+      const hasAutoActivated = Array.from(logsDiv.querySelectorAll('.oo-log-entry'))
+        .some(el => el.textContent.includes('Auto-activated upon entering'));
+
+      if (!hasAutoActivated) {
+        const div = document.createElement('div');
+        div.className = 'oo-log-entry';
+        const span = document.createElement('span');
+        span.className = 'oo-log-time';
+        span.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+        div.appendChild(span);
+        div.appendChild(document.createTextNode(' Auto-activated upon entering AI Studio.'));
+        logsDiv.appendChild(div);
+
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 
