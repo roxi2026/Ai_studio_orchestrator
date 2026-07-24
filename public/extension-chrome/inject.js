@@ -3,6 +3,30 @@
 (function() {
   console.log('[CC] Main world script injected. Intercepting network requests...');
 
+  // --- Helper to filter targets for performance optimization ---
+  function isTargetUrl(urlObjOrStr) {
+    if (!urlObjOrStr) return false;
+    let urlStr = '';
+    if (typeof urlObjOrStr === 'string') {
+      urlStr = urlObjOrStr;
+    } else if (urlObjOrStr instanceof URL) {
+      urlStr = urlObjOrStr.href;
+    } else if (typeof urlObjOrStr === 'object' && urlObjOrStr.url) {
+      urlStr = urlObjOrStr.url;
+    } else {
+      try {
+        urlStr = urlObjOrStr.toString();
+      } catch (e) {
+        return false;
+      }
+    }
+    const lower = urlStr.toLowerCase();
+    return lower.includes('generatecontent') ||
+           lower.includes('v1beta') ||
+           lower.includes('executor') ||
+           lower.includes('reviewer');
+  }
+
   // --- WebSocket Interception ---
   const OriginalWebSocket = window.WebSocket;
   
@@ -34,8 +58,17 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+    let isTarget = false;
+
+    xhr.open = function(method, url, ...args) {
+      isTarget = isTargetUrl(url);
+      return originalOpen.apply(xhr, [method, url, ...args]);
+    };
     
     xhr.addEventListener('load', function() {
+      if (!isTarget) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
@@ -60,13 +93,18 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+    if (!isTargetUrl(url)) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = typeof url === 'string' && url.includes('executor') ? 'executor' :
+                   (typeof url === 'string' && url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({

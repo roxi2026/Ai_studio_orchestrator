@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,55 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Render Logs incrementally
+    if (state.logs) {
+      // If the state resets (e.g. state.totalLogs has gone backwards) or container is in default state
+      const logsContainerDefault = logsDiv.innerHTML.includes('ready and awaiting instructions') && logsDiv.children.length === 1;
+      if (state.totalLogs < lastRenderedTotalLogs || logsContainerDefault) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = Math.min(state.totalLogs - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const newEntries = state.logs.slice(state.logs.length - newLogsCount);
+
+        newEntries.forEach(logText => {
+          const entryDiv = document.createElement('div');
+          entryDiv.className = 'oo-log-entry';
+
+          // Parse "[HH:MM:SS] message"
+          const timeMatch = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+          let timePart = '';
+          let textPart = logText;
+          if (timeMatch) {
+            timePart = timeMatch[1];
+            textPart = timeMatch[2];
+          } else {
+            timePart = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+          }
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = timePart;
+          entryDiv.appendChild(timeSpan);
+          entryDiv.appendChild(document.createTextNode(' ' + textPart));
+
+          fragment.appendChild(entryDiv);
+        });
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = state.totalLogs;
+
+        // Maintain a maximum of 50 log entries in the DOM
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        // Batch scroll operation at the end
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
@@ -118,8 +162,19 @@
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      // Add a welcome log safely using createTextNode
+      const entryDiv = document.createElement('div');
+      entryDiv.className = 'oo-log-entry';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = 'System';
+      entryDiv.appendChild(timeSpan);
+      entryDiv.appendChild(document.createTextNode(' Auto-activated upon entering AI Studio.'));
+      logsDiv.appendChild(entryDiv);
+
+      while (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });
@@ -141,7 +196,18 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'oo-log-entry';
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = 'System';
+    entryDiv.appendChild(timeSpan);
+    entryDiv.appendChild(document.createTextNode(' Memory cleared.'));
+    logsDiv.appendChild(entryDiv);
+
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
     logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
