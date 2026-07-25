@@ -6,6 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +18,34 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Render logs incrementally
+    if (state.logs) {
+      const totalLogs = state.totalLogs || 0;
+      if (totalLogs < lastRenderedTotalLogs || state.logs.length === 0) {
+        logDiv.textContent = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        if (newLogsCount > 0) {
+          const fragment = document.createDocumentFragment();
+          const startIdx = state.logs.length - newLogsCount;
+          for (let i = startIdx; i < state.logs.length; i++) {
+            const div = document.createElement('div');
+            div.textContent = '> ' + state.logs[i];
+            fragment.appendChild(div);
+          }
+          logDiv.appendChild(fragment);
+
+          while (logDiv.children.length > 50) {
+            logDiv.removeChild(logDiv.firstChild);
+          }
+          logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        lastRenderedTotalLogs = totalLogs;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
