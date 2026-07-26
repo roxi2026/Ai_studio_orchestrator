@@ -6,6 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,14 +18,44 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
-    
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
     memoryDiv.innerHTML = Object.entries(state.memory || {}).map(([k, v]) => 
       `<div class="memory-item"><span class="memory-key">${k}:</span> ${v}</div>`
     ).join('') || '<div>No memory stored yet.</div>';
+
+    // Render Logs Incrementally (O(1) complexity)
+    if (state.logs) {
+      const totalLogs = state.totalLogs || state.logs.length;
+
+      // If state was reset (totalLogs count dropped) or container is empty
+      if (totalLogs < lastRenderedTotalLogs || logDiv.children.length === 0) {
+        logDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(state.logs.length - newLogsCount);
+
+        const fragment = document.createDocumentFragment();
+        newLogs.forEach(l => {
+          const entry = document.createElement('div');
+          entry.textContent = '> ' + l;
+          fragment.appendChild(entry);
+        });
+
+        logDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogs;
+
+        // Cap the DOM elements in the logs container to 50 to prevent memory leak and scroll slowing
+        while (logDiv.children.length > 50) {
+          logDiv.removeChild(logDiv.firstChild);
+        }
+
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+    }
   }
 
   chrome.storage.local.get(['orchestratorState'], (res) => {

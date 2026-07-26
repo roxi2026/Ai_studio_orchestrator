@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,49 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Render Logs Incrementally (O(1) complexity)
+    if (state.logs) {
+      const totalLogs = state.totalLogs || state.logs.length;
+
+      // If state was reset (totalLogs count dropped) or we have actual logs to show for the first time (replacing placeholder)
+      if (totalLogs < lastRenderedTotalLogs || (lastRenderedTotalLogs === 0 && state.logs.length > 0)) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (totalLogs > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(state.logs.length - newLogsCount);
+
+        const fragment = document.createDocumentFragment();
+        newLogs.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          // Match timestamp formatted as [HH:MM:SS] message
+          const match = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)/);
+          if (match) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = match[1];
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(' ' + match[2]));
+          } else {
+            entry.textContent = l;
+          }
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogs;
+
+        // Cap the DOM elements in the logs container to 50 to prevent memory leak and scroll slowing
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
@@ -118,8 +156,22 @@
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      // Add a welcome log using high-performance DOM append (avoiding layout thrashing / innerHTML re-parse)
+      const welcomeEntry = document.createElement('div');
+      welcomeEntry.className = 'oo-log-entry';
+      const welcomeTime = document.createElement('span');
+      welcomeTime.className = 'oo-log-time';
+      welcomeTime.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      welcomeEntry.appendChild(welcomeTime);
+      welcomeEntry.appendChild(document.createTextNode(' Auto-activated upon entering AI Studio.'));
+
+      logsDiv.appendChild(welcomeEntry);
+
+      // Cap elements after append
+      while (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
+
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });

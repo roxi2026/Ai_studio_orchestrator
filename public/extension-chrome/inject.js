@@ -9,19 +9,26 @@
   window.WebSocket = function(url, protocols) {
     const ws = new OriginalWebSocket(url, protocols);
     
-    // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
-    const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-    
-    ws.addEventListener('message', function(event) {
-      // Forward the intercepted message to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'WS_MESSAGE',
-        pane: pane,
-        payload: event.data
-      }, '*');
-    });
+    const urlString = url ? url.toString() : '';
+    // Performance optimization: Filter out non-AI Studio API requests
+    const isAIStudioApi = urlString.includes('generateContent') ||
+                          urlString.includes('v1beta') ||
+                          urlString.includes('executor') ||
+                          urlString.includes('reviewer');
+
+    if (isAIStudioApi) {
+      const pane = urlString.includes('executor') ? 'executor' : (urlString.includes('reviewer') ? 'reviewer' : 'unknown');
+
+      ws.addEventListener('message', function(event) {
+        // Forward the intercepted message to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'WS_MESSAGE',
+          pane: pane,
+          payload: event.data
+        }, '*');
+      });
+    }
     
     return ws;
   };
@@ -34,10 +41,24 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+    let requestUrl = '';
+
+    xhr.open = function(method, url, ...args) {
+      requestUrl = url ? url.toString() : '';
+      return originalOpen.apply(this, [method, url, ...args]);
+    };
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      // Performance optimization: Filter out non-AI Studio API requests to prevent postMessage/clone/parsing overload
+      const isAIStudioApi = requestUrl.includes('generateContent') ||
+                            requestUrl.includes('v1beta') ||
+                            requestUrl.includes('executor') ||
+                            requestUrl.includes('reviewer');
+
+      if (!isAIStudioApi) return;
+
+      const pane = requestUrl.includes('executor') ? 'executor' : (requestUrl.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,22 +81,44 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
+    // Safely extract and normalize the URL input (which can be a String, URL, or Request object)
+    let url = '';
+    if (args[0]) {
+      if (typeof args[0] === 'string') {
+        url = args[0];
+      } else if (args[0] instanceof URL) {
+        url = args[0].href;
+      } else if (args[0] instanceof Request) {
+        url = args[0].url;
+      } else {
+        url = args[0].toString();
+      }
+    }
     
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance optimization: Check if target URL contains relevant keywords before cloning or reading text
+    const isAIStudioApi = url.includes('generateContent') ||
+                          url.includes('v1beta') ||
+                          url.includes('executor') ||
+                          url.includes('reviewer');
+
+    if (isAIStudioApi) {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(err => {
+        console.error('[CC] Error reading filtered fetch response:', err);
+      });
+    }
     
     return response;
   };
