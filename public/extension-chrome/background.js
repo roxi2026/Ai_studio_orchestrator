@@ -23,15 +23,38 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for optimized incremental rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+// Helper function to broadcast events to all active Extension context/tabs
+function broadcastToAIStudio(msg) {
+  chrome.runtime.sendMessage(msg, () => {
+    // Suppress chrome.runtime.lastError when popup is closed
+    const err = chrome.runtime.lastError;
+  });
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, msg, () => {
+      const err = chrome.runtime.lastError;
+    });
+  }
+}
+
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
+  // Native prepend HH:MM:SS timestamp to log entries for consistency and performance
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMsg = `[${timeStr}] ${message}`;
+
+  console.log(`[CC] ${formattedMsg}`);
+  state.logs.push(formattedMsg);
+  state.totalLogs++;
+
+  if (state.logs.length > 50) {
+    state.logs.shift();
+  }
   saveState();
 }
 
@@ -96,6 +119,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+
+  // Clear the UI logs instantly on both popup and tab side
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

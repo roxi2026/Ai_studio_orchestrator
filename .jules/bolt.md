@@ -1,0 +1,3 @@
+## 2025-07-28 - [Extension Performance Evolved: Parallel Fetching, O(1) Logging, API Filtering]
+**Learning:** Sequential network waterfalls during extension asset packaging block downloads needlessly. Incremental log UI rendering with innerHTML is computationally heavy ($O(N)$) and induces layout thrashing. Lastly, cloning and reading the response body of every single fetch/XHR request across non-target endpoints creates massive CPU and memory overhead on host pages.
+**Action:** Parallelize asset fetches with `Promise.all()`, utilize monotonic state sequences to append elements incrementally with `DocumentFragment` / `createTextNode` ($O(1)$) inside UI scripts with a 50-item DOM ceiling, and introduce early-return URL filtering for network interception scripts.
