@@ -23,10 +23,16 @@ export default function App() {
     ];
 
     try {
-      for (const file of files) {
+      // Fetch extension assets in parallel via Promise.all to avoid waterfall delays
+      const fetchPromises = files.map(async (file) => {
         const response = await fetch(`/extension-chrome/${file}`);
         if (!response.ok) throw new Error(`Failed to fetch ${file}`);
         const content = await response.text();
+        return { file, content };
+      });
+
+      const results = await Promise.all(fetchPromises);
+      for (const { file, content } of results) {
         zip.file(file, content);
       }
 

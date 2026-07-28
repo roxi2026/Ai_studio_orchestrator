@@ -73,7 +73,36 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
-  // State Management
+  // Monotonic log rendering tracking to allow efficient O(1) incremental rendering
+  let lastRenderedTotalLogs = 0;
+
+  function appendLogElement(text) {
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    // The log string already has [HH:MM:SS] prepended natively by background.js.
+    // Parse out timestamp if possible, otherwise use standard formatting.
+    const timeRegex = /^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)/;
+    const match = text.match(timeRegex);
+
+    if (match) {
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = match[1];
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(' ' + match[2]));
+    } else {
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(' ' + text));
+    }
+
+    return entry;
+  }
+
+  // State Management - O(1) Incremental DOM Appends
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +119,44 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Safeguard: Check if background state was reset
+    if (state.totalLogs < lastRenderedTotalLogs) {
+      logsDiv.textContent = ''; // Fast clear
+      lastRenderedTotalLogs = 0;
+    }
+
+    // Incremental log rendering
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const totalLogsInState = state.totalLogs !== undefined ? state.totalLogs : state.logs.length;
+
+      if (totalLogsInState > lastRenderedTotalLogs) {
+        // Clear default placeholder if present
+        if (lastRenderedTotalLogs === 0) {
+          logsDiv.textContent = '';
+        }
+
+        const newLogsCount = Math.min(totalLogsInState - lastRenderedTotalLogs, state.logs.length);
+        const startIndex = state.logs.length - newLogsCount;
+        const fragment = document.createDocumentFragment();
+
+        for (let i = startIndex; i < state.logs.length; i++) {
+          fragment.appendChild(appendLogElement(state.logs[i]));
+        }
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogsInState;
+
+        // Enforce a strict 50-entry cap in the DOM to prevent slow reflows & DOM bloat
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        // Batch scroll reflow
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
+    } else if (!state.logs || state.logs.length === 0) {
+      logsDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
     }
   }
 
@@ -112,15 +172,26 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
-      if (msg.state) updateUI(msg.state);
+      if (msg.state) {
+        updateUI(msg.state);
+      }
+
+      const entry = appendLogElement('Auto-activated upon entering AI Studio.');
+      logsDiv.appendChild(entry);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      while (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
       logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 
