@@ -36,8 +36,13 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      const urlStr = xhr.responseURL || '';
+      // Optimization: filter out traffic that is not relevant to AI Studio orchestration
+      const isTarget = ['generateContent', 'v1beta', 'executor', 'reviewer'].some(keyword => urlStr.includes(keyword));
+      if (!isTarget) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,22 +65,41 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Normalize url from string, Request, or URL objects
+    let urlStr = '';
+    if (args[0] instanceof Request) {
+      urlStr = args[0].url;
+    } else if (args[0] instanceof URL) {
+      urlStr = args[0].href;
+    } else {
+      urlStr = String(args[0] || '');
+    }
+
+    // Optimization: filter out static assets, tracking/telemetry, and unrelated traffic
+    const isTarget = ['generateContent', 'v1beta', 'executor', 'reviewer'].some(keyword => urlStr.includes(keyword));
+    if (!isTarget) return response;
+
+    try {
+      // Clone the response so we can read the body without consuming it for the original caller
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        // Determine which pane this fetch belongs to based on request URL or payload
+        const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(err => {
+        console.warn('[CC] Failed to read cloned response text:', err);
+      });
+    } catch (err) {
+      console.warn('[CC] Failed to clone response:', err);
+    }
     
     return response;
   };
