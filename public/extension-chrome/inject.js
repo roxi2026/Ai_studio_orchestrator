@@ -36,8 +36,13 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      const url = xhr.responseURL || '';
+      // Performance Filter: Only clone/intercept relevant AI Studio API traffic
+      const isTarget = url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer');
+      if (!isTarget) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,12 +65,21 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Normalize url input to a string
+    const firstArg = args[0];
+    const url = firstArg instanceof Request ? firstArg.url : (firstArg instanceof URL ? firstArg.href : String(firstArg));
+
+    // Performance Filter: Only clone/intercept relevant AI Studio API traffic.
+    // Avoids heavy cloning and body-to-text resolution for static assets or telemetry.
+    const isTarget = url.includes('generateContent') || url.includes('v1beta') || url.includes('executor') || url.includes('reviewer');
+    if (!isTarget) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
       const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
@@ -75,6 +89,8 @@
         pane: pane,
         payload: text
       }, '*');
+    }).catch(err => {
+      console.warn('[CC] Failed to read cloned fetch response body:', err);
     });
     
     return response;
