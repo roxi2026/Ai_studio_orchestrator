@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,58 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Render Logs incrementally
+    if (state.logs) {
+      const currentTotal = state.totalLogs || 0;
+
+      // If we are restoring log history on load, and there are logs in the state,
+      // clear the default "ready and awaiting instructions" placeholder log.
+      if (lastRenderedTotalLogs === 0 && currentTotal > 0) {
+        logsDiv.innerHTML = '';
+      }
+
+      // If orchestrator restarted/cleared logs or state is out of sync, clear UI logs
+      if (currentTotal < lastRenderedTotalLogs) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const newLogs = state.logs.slice(-newLogsCount);
+        const fragment = document.createDocumentFragment();
+
+        newLogs.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          // Check if log contains a timestamp, e.g. [12:34:56] Message
+          const timestampMatch = l.match(/^\[(\d{2}:\d{2}:\d{2})\] (.*)$/);
+          if (timestampMatch) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = timestampMatch[1];
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(' ' + timestampMatch[2]));
+          } else {
+            entry.textContent = l;
+          }
+
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+
+        // Enforce 50 entries cap in DOM
+        while (logsDiv.childElementCount > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        // Batch scroll to bottom to prevent reflows inside the loop
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
+
+      lastRenderedTotalLogs = currentTotal;
     }
   }
 
@@ -118,8 +165,23 @@
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      // Add a welcome log safely and incrementally
+      const welcomeEntry = document.createElement('div');
+      welcomeEntry.className = 'oo-log-entry';
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = 'System';
+
+      welcomeEntry.appendChild(timeSpan);
+      welcomeEntry.appendChild(document.createTextNode(' Auto-activated upon entering AI Studio.'));
+
+      logsDiv.appendChild(welcomeEntry);
+
+      while (logsDiv.childElementCount > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
+
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });
@@ -141,7 +203,24 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
+
+    // Add memory cleared log safely and incrementally
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = 'System';
+
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' Memory cleared.'));
+
+    logsDiv.appendChild(entry);
+
+    while (logsDiv.childElementCount > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
     logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
