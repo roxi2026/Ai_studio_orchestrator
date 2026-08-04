@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,58 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Render Logs Incrementally (O(1) updates)
+    if (state.logs) {
+      const totalLogs = state.totalLogs || 0;
+
+      // Handle state resets (e.g. orchestration restarted)
+      if (totalLogs < lastRenderedTotalLogs) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const isDefaultState = logsDiv.children.length === 0 ||
+        (logsDiv.children.length === 1 && logsDiv.querySelector('.oo-log-entry')?.textContent?.includes('ready and awaiting'));
+
+      if (lastRenderedTotalLogs === 0 && isDefaultState) {
+        // Initial log history restoration
+        logsDiv.innerHTML = '';
+        const fragment = document.createDocumentFragment();
+        state.logs.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+          entry.textContent = l;
+          fragment.appendChild(entry);
+        });
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogs;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      } else if (totalLogs > lastRenderedTotalLogs) {
+        // Incremental append
+        const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+        if (newLogsCount > 0) {
+          const sliceStart = state.logs.length - newLogsCount;
+          const newLogs = state.logs.slice(sliceStart);
+          const fragment = document.createDocumentFragment();
+
+          newLogs.forEach(l => {
+            const entry = document.createElement('div');
+            entry.className = 'oo-log-entry';
+            entry.textContent = l;
+            fragment.appendChild(entry);
+          });
+
+          logsDiv.appendChild(fragment);
+
+          // Manage 50-entry cap
+          while (logsDiv.children.length > 50) {
+            logsDiv.removeChild(logsDiv.firstChild);
+          }
+
+          lastRenderedTotalLogs = totalLogs;
+          logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+      }
     }
   }
 
@@ -112,15 +159,21 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate or CLEAR_LOGS)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      // Add a welcome log cleanly
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+      entry.textContent = '[System] Auto-activated upon entering AI Studio.';
+      logsDiv.appendChild(entry);
       logsDiv.scrollTop = logsDiv.scrollHeight;
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 
@@ -141,7 +194,10 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    entry.textContent = '[System] Memory cleared.';
+    logsDiv.appendChild(entry);
     logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 

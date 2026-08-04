@@ -23,14 +23,18 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMsg = `[${time}] ${message}`;
+  console.log(`[CC] ${formattedMsg}`);
+  state.logs.push(formattedMsg);
+  state.totalLogs = (state.totalLogs || 0) + 1;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -96,9 +100,16 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
-  log('Initializing Central Command (CC)...');
+  state.totalLogs = 0;
   
+  // Broadcast CLEAR_LOGS to popup and in-page UI
+  chrome.runtime.sendMessage({ action: 'CLEAR_LOGS' }).catch(() => {});
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { action: 'CLEAR_LOGS' }).catch(() => {});
+  }
+
+  log('Initializing Central Command (CC)...');
   if (tabs.length === 0) {
     log('Error: AI Studio tab not found.');
     state.status = 'Error';

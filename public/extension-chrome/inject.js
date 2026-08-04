@@ -34,10 +34,21 @@
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
+    const originalOpen = xhr.open;
+    let requestUrl = '';
+
+    xhr.open = function(method, url, ...rest) {
+      requestUrl = url instanceof URL ? url.href : String(url);
+      return originalOpen.apply(this, [method, url, ...rest]);
+    };
     
     xhr.addEventListener('load', function() {
+      // Host-based filtering: target relevant AI Studio APIs before doing any heavy operations
+      const isTarget = ['generateContent', 'v1beta', 'executor', 'reviewer'].some(api => requestUrl.includes(api));
+      if (!isTarget) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = requestUrl.includes('executor') ? 'executor' : (requestUrl.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -58,6 +69,26 @@
   const originalFetch = window.fetch;
   
   window.fetch = async function(...args) {
+    if (!args[0]) return originalFetch.apply(this, args);
+
+    // Safely handle URL objects, Request objects, and strings by normalizing the input to a string
+    let urlStr = '';
+    if (typeof args[0] === 'string') {
+      urlStr = args[0];
+    } else if (args[0] instanceof URL) {
+      urlStr = args[0].href;
+    } else if (args[0] instanceof Request) {
+      urlStr = args[0].url;
+    } else {
+      urlStr = String(args[0]);
+    }
+
+    // Host-based filtering: only intercept relevant AI Studio APIs before cloning response body
+    const isTarget = ['generateContent', 'v1beta', 'executor', 'reviewer'].some(api => urlStr.includes(api));
+    if (!isTarget) {
+      return originalFetch.apply(this, args);
+    }
+
     const response = await originalFetch.apply(this, args);
     
     // Clone the response so we can read the body without consuming it for the original caller
@@ -65,8 +96,7 @@
     
     clonedResponse.text().then(text => {
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -75,6 +105,8 @@
         pane: pane,
         payload: text
       }, '*');
+    }).catch(err => {
+      console.error('[CC] Error processing fetch response clone text:', err);
     });
     
     return response;
