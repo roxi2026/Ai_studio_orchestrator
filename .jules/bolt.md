@@ -1,0 +1,3 @@
+## 2025-08-05 - Chrome Extension Performance Evolution
+**Learning:** Intercepting all main world fetch, XHR, and WebSocket requests creates severe overhead on chatty hosts like AI Studio. Filtering endpoints early using robust pattern matching saves significant CPU resources. Additionally, re-rendering UI logs via O(N) `innerHTML` incurs massive DOM thrashing and layout thrashing, which is optimally resolved through O(1) incremental rendering via `DocumentFragment` and text node appends with a fixed sliding-window sliding cap of 50 logs.
+**Action:** Always filter third-party page interceptions before reading bodies or cloning objects, and always utilize DocumentFragments with incremental slice state updates for telemetry or console views.

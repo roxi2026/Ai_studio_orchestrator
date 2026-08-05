@@ -23,14 +23,39 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+// Broadcasts a message to both runtime (popup) and all active AI Studio tabs
+async function broadcastToAIStudio(message) {
+  chrome.runtime.sendMessage(message, () => {
+    // Ignore runtime error if popup is not open/active
+    if (chrome.runtime.lastError) { /* ignore */ }
+  });
+
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      if (tab.id) {
+        chrome.tabs.sendMessage(tab.id, message, () => {
+          if (chrome.runtime.lastError) { /* ignore */ }
+        });
+      }
+    }
+  } catch (e) {
+    // Ignore queries failing during extension restarts/unload
+  }
+}
+
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMessage = `[${time}] ${message}`;
+  console.log(`[CC] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
+  state.totalLogs = (state.totalLogs || 0) + 1;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -96,6 +121,8 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
