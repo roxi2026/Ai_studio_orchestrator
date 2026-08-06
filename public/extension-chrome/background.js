@@ -23,20 +23,43 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMessage = `[${timeStr}] ${message}`;
+
+  console.log(`[CC] ${formattedMessage}`);
+  state.logs.push(formattedMessage);
+  state.totalLogs++;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
 
 function saveState() {
   chrome.storage.local.set({ orchestratorState: state });
+}
+
+// Helper to broadcast messages to both popups and active AI Studio tabs
+async function broadcastToAIStudio(message) {
+  try {
+    chrome.runtime.sendMessage(message).catch(() => {});
+  } catch (e) {
+    // Ignore runtime error if no receiver exists
+  }
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    }
+  } catch (e) {
+    // Ignore error if tabs are unavailable
+  }
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
@@ -96,6 +119,11 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+
+  // Clear any logs in UI scripts
+  await broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
