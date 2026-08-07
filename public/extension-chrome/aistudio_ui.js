@@ -73,6 +73,32 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Local cache for O(1) incremental rendering
+  let lastRenderedTotalLogs = 0;
+
+  function createLogElement(logText) {
+    const div = document.createElement('div');
+    div.className = 'oo-log-entry';
+
+    // Parse timestamp if it is natively prepended in brackets [HH:MM:SS]
+    const match = logText.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+    if (match) {
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = match[1];
+      div.appendChild(timeSpan);
+      div.appendChild(document.createTextNode(' ' + match[2]));
+    } else {
+      const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = time;
+      div.appendChild(timeSpan);
+      div.appendChild(document.createTextNode(' ' + logText));
+    }
+    return div;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +116,49 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Incremental Render Logs
+    const totalLogs = state.totalLogs || 0;
+    const logs = state.logs || [];
+
+    // 1. Detect and handle state resets (e.g. orchestrator restarted or logs cleared)
+    if (totalLogs < lastRenderedTotalLogs || totalLogs === 0) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    // 2. Check if the container is empty (default state) and we have initial logs to populate
+    const isEmpty = logsDiv.children.length === 0 ||
+                    (logsDiv.children.length === 1 && logsDiv.querySelector('.oo-log-entry')?.textContent.includes('ready and awaiting'));
+
+    if (isEmpty && logs.length > 0) {
+      logsDiv.innerHTML = '';
+      const fragment = document.createDocumentFragment();
+      for (const logText of logs) {
+        fragment.appendChild(createLogElement(logText));
+      }
+      logsDiv.appendChild(fragment);
+      lastRenderedTotalLogs = totalLogs;
       logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+    // 3. Otherwise perform incremental rendering
+    else if (totalLogs > lastRenderedTotalLogs) {
+      const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, logs.length);
+      if (newLogsCount > 0) {
+        const newLogs = logs.slice(logs.length - newLogsCount);
+        const fragment = document.createDocumentFragment();
+        for (const logText of newLogs) {
+          fragment.appendChild(createLogElement(logText));
+        }
+        logsDiv.appendChild(fragment);
+
+        // Maintain 50-entry cap in the DOM to avoid memory leak and layout thrashing
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        lastRenderedTotalLogs = totalLogs;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
@@ -112,15 +174,20 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate or clear logs)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Add a welcome log if no real logs have been rendered yet
+      if (logsDiv.children.length <= 1) {
+        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+        logsDiv.innerHTML = `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> Auto-activated upon entering AI Studio.</div>`;
+      }
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 

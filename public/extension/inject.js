@@ -30,14 +30,32 @@
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
   // --- XMLHttpRequest Interception ---
+  // PERFORMANCE OPTIMIZATION: Avoid intercepting and reading responses for non-target URLs
+  // to prevent memory leaks, main-thread blocking, and unnecessary postMessage communications.
   const OriginalXHR = window.XMLHttpRequest;
   
   window.XMLHttpRequest = function() {
     const xhr = new OriginalXHR();
     
+    // Capture URL during open() call
+    const originalOpen = xhr.open;
+    let requestUrl = '';
+    xhr.open = function(method, url, ...rest) {
+      requestUrl = url ? (typeof url === 'string' ? url : (url.href || url.toString())) : '';
+      return originalOpen.call(this, method, url, ...rest);
+    };
+
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const urlStr = xhr.responseURL || requestUrl || '';
+
+      // Filter out non-target traffic (static assets, analytics, telemetry)
+      const isTarget = urlStr.includes('generateContent') ||
+                       urlStr.includes('v1beta') ||
+                       urlStr.includes('executor') ||
+                       urlStr.includes('reviewer');
+      if (!isTarget) return;
+
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -55,18 +73,43 @@
   window.XMLHttpRequest.prototype = OriginalXHR.prototype;
 
   // --- Fetch Interception ---
+  // PERFORMANCE OPTIMIZATION: Check URL compatibility and filter out non-target URLs
+  // BEFORE cloning or calling response.text() to eliminate memory bloat and garbage collection thrashing.
   const originalFetch = window.fetch;
   
   window.fetch = async function(...args) {
+    // 1. Safely extract and normalize the request URL to a string
+    let urlStr = '';
+    const firstArg = args[0];
+    if (typeof firstArg === 'string') {
+      urlStr = firstArg;
+    } else if (firstArg instanceof URL) {
+      urlStr = firstArg.href;
+    } else if (firstArg instanceof Request) {
+      urlStr = firstArg.url;
+    } else if (firstArg && typeof firstArg.toString === 'function') {
+      urlStr = firstArg.toString();
+    }
+
+    // 2. Perform early-exit filtering for target AI Studio APIs
+    const isTarget = urlStr.includes('generateContent') ||
+                     urlStr.includes('v1beta') ||
+                     urlStr.includes('executor') ||
+                     urlStr.includes('reviewer');
+
+    // Bypass interception completely for non-target calls
+    if (!isTarget) {
+      return originalFetch.apply(this, args);
+    }
+
+    // Otherwise, fetch and process the payload
     const response = await originalFetch.apply(this, args);
     
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -75,6 +118,8 @@
         pane: pane,
         payload: text
       }, '*');
+    }).catch(err => {
+      console.warn('[Orchestrator] Error reading intercepted fetch body:', err);
     });
     
     return response;

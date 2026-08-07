@@ -25,14 +25,34 @@ let state = {
   currentStepIndex: 0,
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   targetTabId: null,
   pendingPrompt: null
 };
 
+// Broadcast helper for extension views and tabs
+async function broadcastToAIStudio(message) {
+  // Broadcast to extension popups/views
+  chrome.runtime.sendMessage(message).catch(() => {});
+
+  // Broadcast to AI Studio tabs
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+}
+
 function log(message) {
-  console.log(`[Orchestrator] ${message}`);
-  state.logs.push(message);
+  const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMsg = `[${time}] ${message}`;
+  console.log(`[Orchestrator] ${formattedMsg}`);
+  state.logs.push(formattedMsg);
+  state.totalLogs = (state.totalLogs || 0) + 1;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -42,7 +62,12 @@ function saveState() {
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    if (typeof state.totalLogs !== 'number') {
+      state.totalLogs = state.logs ? state.logs.length : 0;
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -88,6 +113,11 @@ async function startOrchestration(goal) {
   state.currentStepIndex = 0;
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0; // Reset monotonic counter
+
+  // Broadcast CLEAR_LOGS to all connected extension views
+  await broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Phase 1: Meta-Planning initialized...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
