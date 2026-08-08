@@ -23,14 +23,20 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for O(1) incremental rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  // Natively prepend HH:MM:SS timestamps to maintain consistent formatting across all views
+  const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMsg = `[${timeStr}] ${message}`;
+
+  console.log(`[CC] ${formattedMsg}`);
+  state.logs.push(formattedMsg);
+  state.totalLogs++; // Increment the monotonic counter
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -91,11 +97,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Helper to broadcast to any active AI Studio tab and popup listeners
+function broadcastToAIStudio(message) {
+  // Send to popup if open
+  chrome.runtime.sendMessage(message, () => {
+    // Suppress "Receiving end does not exist" error when popup is closed
+    if (chrome.runtime.lastError) { /* ignore */ }
+  });
+  // Send to AI Studio tab if brainTabId is set
+  if (state.brainTabId) {
+    chrome.tabs.sendMessage(state.brainTabId, message, () => {
+      if (chrome.runtime.lastError) { /* ignore */ }
+    });
+  }
+}
+
 async function startOrchestration(goal) {
   state.goal = goal;
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0; // Reset counter for new runs
+
+  // Broadcast clear logs event to ensure UI is reset for fresh orchestration attempts
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

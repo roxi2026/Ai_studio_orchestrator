@@ -23,12 +23,15 @@ export default function App() {
     ];
 
     try {
-      for (const file of files) {
-        const response = await fetch(`/extension-chrome/${file}`);
-        if (!response.ok) throw new Error(`Failed to fetch ${file}`);
-        const content = await response.text();
-        zip.file(file, content);
-      }
+      // Parallelize extension fetching to retrieve all assets concurrently (up to 12x speedup over sequential fetching)
+      await Promise.all(
+        files.map(async (file) => {
+          const response = await fetch(`/extension-chrome/${file}`);
+          if (!response.ok) throw new Error(`Failed to fetch ${file}`);
+          const content = await response.text();
+          zip.file(file, content);
+        })
+      );
 
       const content = await zip.generateAsync({ type: 'blob' });
       saveAs(content, `omnipotent-ai-orchestrator-v8.0-chrome.zip`);
