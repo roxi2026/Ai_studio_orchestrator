@@ -23,14 +23,24 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMessage = `[${timestamp}] ${message}`;
+
+  console.log(`[CC] ${formattedMessage}`);
+
+  if (state.totalLogs === undefined) {
+    state.totalLogs = 0;
+  }
+  state.totalLogs++;
+
+  state.logs.push(formattedMessage);
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -39,8 +49,30 @@ function saveState() {
   chrome.storage.local.set({ orchestratorState: state });
 }
 
+async function broadcastToAIStudio(message) {
+  // Broadcast to popup / other extension contexts
+  try {
+    chrome.runtime.sendMessage(message).catch(() => {});
+  } catch (e) {}
+
+  // Broadcast to active AI Studio tabs
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      if (tab.id) {
+        chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+      }
+    }
+  } catch (e) {}
+}
+
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    if (state.totalLogs === undefined) {
+      state.totalLogs = state.logs ? state.logs.length : 0;
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +128,12 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
+  saveState();
+
+  // Broadcast CLEAR_LOGS event before any logs are added to ensure UI resets cleanly
+  await broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
