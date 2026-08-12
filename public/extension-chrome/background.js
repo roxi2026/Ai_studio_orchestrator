@@ -23,16 +23,55 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0, // Monotonic counter for incremental rendering
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
+// Broadcast updates to popup.js and aistudio_ui.js
+async function broadcastToAIStudio(message) {
+  // Broadcast to extension popups/views
+  try {
+    chrome.runtime.sendMessage(message, () => {
+      // Ignore errors if popup is not open
+      if (chrome.runtime.lastError) { /* ignore */ }
+    });
+  } catch (e) {}
+
+  // Broadcast to active AI Studio tabs
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, message, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+  } catch (e) {}
+}
+
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
-  if (state.logs.length > 50) state.logs.shift();
+  // Prepend HH:MM:SS timestamp natively for consistent formatting
+  const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedMsg = `[${timeStr}] ${message}`;
+
+  console.log(`[CC] ${formattedMsg}`);
+  state.logs.push(formattedMsg);
+  state.totalLogs = (state.totalLogs || 0) + 1;
+
+  if (state.logs.length > 50) {
+    state.logs.shift();
+  }
+
   saveState();
+
+  // Broadcast the new log item to active views for O(1) appending
+  broadcastToAIStudio({
+    action: 'NEW_LOG',
+    message: formattedMsg,
+    totalLogs: state.totalLogs,
+    logs: state.logs
+  });
 }
 
 function saveState() {
@@ -40,7 +79,12 @@ function saveState() {
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    if (state.totalLogs === undefined) {
+      state.totalLogs = state.logs ? state.logs.length : 0;
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +140,12 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0; // Reset monotonic log counter for fresh run
+  saveState();
+
+  // Clear logs in the frontend before logging first statement
+  broadcastToAIStudio({ action: 'CLEAR_LOGS' });
+
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
