@@ -73,6 +73,84 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  // Monotonic tracking for O(1) rendering
+  let lastRenderedTotalLogs = 0;
+
+  // Helper to safely parse and create a single log DOM element with XSS protection
+  function createLogElement(l) {
+    const row = document.createElement('div');
+    row.className = 'oo-log-entry';
+
+    // Parse HH:MM:SS timestamp from natively prepended brackets, e.g. "[12:34:56] message"
+    const tsMatch = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*([\s\S]*)$/);
+    if (tsMatch) {
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = tsMatch[1];
+      row.appendChild(timeSpan);
+      row.appendChild(document.createTextNode(' ' + tsMatch[2]));
+    } else {
+      // Fallback if no bracketed timestamp is found (e.g. system messages)
+      row.textContent = l;
+    }
+    return row;
+  }
+
+  // O(1) Incremental Rendering function using DocumentFragment and Text Nodes
+  function appendLogsIncremental(logs, totalLogs) {
+    if (!logs || logs.length === 0) return;
+
+    // 1. Evaluate state resets or clears (state.totalLogs < lastRenderedTotalLogs)
+    if (totalLogs < lastRenderedTotalLogs) {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    // 2. Initial log history restoration check
+    const isDefaultState = logsDiv.children.length <= 1 &&
+      (logsDiv.children.length === 0 || logsDiv.firstElementChild.textContent.includes('ready'));
+
+    if (isDefaultState && lastRenderedTotalLogs === 0) {
+      logsDiv.innerHTML = ''; // clear default welcome message
+      const fragment = document.createDocumentFragment();
+      logs.forEach(l => {
+        const row = createLogElement(l);
+        fragment.appendChild(row);
+      });
+      logsDiv.appendChild(fragment);
+      lastRenderedTotalLogs = totalLogs;
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+      return;
+    }
+
+    // 3. Incremental updates comparing monotonic totalLogs with lastRenderedTotalLogs
+    if (totalLogs > lastRenderedTotalLogs) {
+      const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, logs.length);
+      if (newLogsCount > 0) {
+        const sliceStart = logs.length - newLogsCount;
+        const newLogs = logs.slice(sliceStart);
+
+        const fragment = document.createDocumentFragment();
+        newLogs.forEach(l => {
+          const row = createLogElement(l);
+          fragment.appendChild(row);
+        });
+
+        // Append all new elements in a single DOM manipulation to minimize reflows
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogs;
+      }
+    }
+
+    // 4. Strict 50-entry cap to prevent layout reflow degradation and memory bloat
+    while (logsDiv.children.length > 50) {
+      logsDiv.removeChild(logsDiv.firstChild);
+    }
+
+    // 5. Batch the scroll operation once after the incremental append loop
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +168,9 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Render Logs Incrementally
+    if (state.logs) {
+      appendLogsIncremental(state.logs, state.totalLogs || state.logs.length);
     }
   }
 
@@ -112,15 +186,21 @@
     }
   });
 
-  // Listen for direct messages (like auto-activate)
+  // Listen for direct messages (like auto-activate or direct log broadcasts)
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      // Add a welcome log safely
+      const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const welcomeLog = `[${timeStr}] System: Auto-activated upon entering AI Studio.`;
+      appendLogsIncremental([welcomeLog], lastRenderedTotalLogs + 1);
+    } else if (msg.action === 'NEW_LOG') {
+      appendLogsIncremental(msg.logs || [msg.message], msg.totalLogs);
+    } else if (msg.action === 'CLEAR_LOGS') {
+      logsDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
     }
   });
 
@@ -141,8 +221,9 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+    const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const clearedLog = `[${timeStr}] System: Memory cleared.`;
+    appendLogsIncremental([clearedLog], lastRenderedTotalLogs + 1);
   });
 
   // Auto-activate on load
