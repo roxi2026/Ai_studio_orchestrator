@@ -6,7 +6,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
+    if (!state) return;
+
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
         statusDiv.style.background = '#e6f4ea'; statusDiv.style.color = '#137333';
@@ -16,8 +20,34 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental DOM log rendering for O(1) update performance
+    const totalLogs = state.totalLogs ?? state.logs?.length ?? 0;
+
+    if (totalLogs < lastRenderedTotalLogs || (totalLogs > 0 && logDiv.children.length === 0)) {
+      logDiv.innerHTML = '';
+      lastRenderedTotalLogs = 0;
+    }
+
+    if (state.logs && state.logs.length > 0 && totalLogs > lastRenderedTotalLogs) {
+      const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+      const newLogs = state.logs.slice(state.logs.length - newLogsCount);
+      const fragment = document.createDocumentFragment();
+
+      for (const logMsg of newLogs) {
+        const div = document.createElement('div');
+        div.textContent = `> ${logMsg}`;
+        fragment.appendChild(div);
+      }
+
+      logDiv.appendChild(fragment);
+
+      while (logDiv.children.length > 50) {
+        logDiv.removeChild(logDiv.firstChild);
+      }
+
+      logDiv.scrollTop = logDiv.scrollHeight;
+      lastRenderedTotalLogs = totalLogs;
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     

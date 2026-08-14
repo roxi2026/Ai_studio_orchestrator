@@ -3,6 +3,25 @@
 (function() {
   console.log('[CC] Main world script injected. Intercepting network requests...');
 
+  // Performance helper: check if network URL matches target AI Studio API endpoints
+  function isTargetUrl(input) {
+    if (!input) return false;
+    let urlStr = '';
+    if (typeof input === 'string') {
+      urlStr = input;
+    } else if (typeof Request !== 'undefined' && input instanceof Request) {
+      urlStr = input.url;
+    } else if (input && input.href) {
+      urlStr = input.href;
+    } else {
+      urlStr = String(input);
+    }
+    return urlStr.includes('generateContent') ||
+           urlStr.includes('v1beta') ||
+           urlStr.includes('executor') ||
+           urlStr.includes('reviewer');
+  }
+
   // --- WebSocket Interception ---
   const OriginalWebSocket = window.WebSocket;
   
@@ -10,10 +29,10 @@
     const ws = new OriginalWebSocket(url, protocols);
     
     // Determine which pane this WebSocket belongs to based on URL or request payload
-    // This is a simplified heuristic. Real implementation would require deep inspection of the URL parameters.
     const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
     
     ws.addEventListener('message', function(event) {
+      if (!isTargetUrl(url)) return;
       // Forward the intercepted message to the content script
       window.postMessage({
         source: 'ORCHESTRATOR_INJECT',
@@ -36,7 +55,9 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
+      // Performance optimization: skip processing non-target requests
+      if (!isTargetUrl(xhr.responseURL)) return;
+
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
@@ -60,13 +81,17 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    // Performance optimization: Skip response cloning & text decoding if URL is not a target API endpoint
+    if (!isTargetUrl(args[0])) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const urlStr = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : String(args[0] || ''));
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -75,7 +100,7 @@
         pane: pane,
         payload: text
       }, '*');
-    });
+    }).catch(() => {});
     
     return response;
   };
