@@ -12,7 +12,7 @@ injectScript(chrome.runtime.getURL('inject.js'), 'body');
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'SEND_PROMPT') {
-    console.log('[Orchestrator Brain] Sending prompt to AI Studio...');
+    console.log('[CC Brain] Sending prompt to AI Studio...');
     const input = document.querySelector('textarea[aria-label="Type a message"]') || document.querySelector('textarea[placeholder*="Type"]');
     if (input) {
       input.value = msg.text;
@@ -22,7 +22,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (btn) btn.click();
       }, 500);
     } else {
-      console.error('[Orchestrator Brain] Could not find chat input field.');
+      console.error('[CC Brain] Could not find chat input field.');
     }
   }
 });
@@ -30,13 +30,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 window.addEventListener('message', (event) => {
   if (event.source !== window || !event.data || event.data.source !== 'ORCHESTRATOR_INJECT') return;
   
-  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE') {
-    if (event.data.payload.includes('"done": true')) {
+  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE' || event.data.type === 'FETCH_RESPONSE') {
+    if (event.data.payload && typeof event.data.payload === 'string' && event.data.payload.includes('"done": true')) {
       try {
         const data = JSON.parse(event.data.payload);
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
-          console.log('[Orchestrator Brain] Generation complete. Forwarding to background.');
+          console.log('[CC Brain] Generation complete. Forwarding to background.');
           chrome.runtime.sendMessage({ action: 'MODEL_OUTPUT_COMPLETE', text: text });
         }
       } catch(e) {
