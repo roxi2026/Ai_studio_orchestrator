@@ -30,8 +30,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 window.addEventListener('message', (event) => {
   if (event.source !== window || !event.data || event.data.source !== 'ORCHESTRATOR_INJECT') return;
   
-  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE') {
-    if (event.data.payload.includes('"done": true')) {
+  if (event.data.type === 'WS_MESSAGE' || event.data.type === 'XHR_RESPONSE' || event.data.type === 'FETCH_RESPONSE') {
+    if (event.data.payload && event.data.payload.includes('"done": true')) {
       try {
         const data = JSON.parse(event.data.payload);
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
