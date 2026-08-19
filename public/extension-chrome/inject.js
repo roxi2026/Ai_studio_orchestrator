@@ -29,6 +29,17 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // Optimization helper: target relevant AI Studio API endpoints to avoid IPC spam and clone overhead
+  const isTargetUrl = (url) => {
+    if (!url) return false;
+    const urlStr = typeof url === 'string' ? url : (url.url || String(url));
+    return urlStr.includes('generateContent') ||
+           urlStr.includes('v1beta') ||
+           urlStr.includes('executor') ||
+           urlStr.includes('reviewer') ||
+           urlStr.includes('prompts');
+  };
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,8 +47,12 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const url = xhr.responseURL;
+      // Performance filter: skip non-AI API XHR requests (analytics, assets, telemetry)
+      if (!isTargetUrl(url)) return;
+
+      // Determine which pane this XHR belongs to based on request URL
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,22 +75,28 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    const input = args[0];
+    const url = input instanceof Request ? input.url : input;
+
+    // Performance filter: skip clone/text extraction for non-target requests
+    if (isTargetUrl(url)) {
+      // Clone response only for target AI Studio API calls
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = String(url).includes('executor') ? 'executor' : (String(url).includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(err => {
+        console.error('[CC] Error reading fetch response body:', err);
+      });
+    }
     
     return response;
   };
