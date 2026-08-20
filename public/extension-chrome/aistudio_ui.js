@@ -73,7 +73,9 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
-  // State Management
+  // State Management & Incremental Rendering
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,52 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+    // Incremental Log Rendering Optimization using DocumentFragment
+    if (state.logs) {
+      const currentTotal = state.totalLogs || state.logs.length;
+
+      const isInitialDefault = logsDiv.children.length === 1 && logsDiv.querySelector('.oo-log-time')?.textContent === 'System';
+      if (currentTotal < lastRenderedTotalLogs || isInitialDefault) {
+        logsDiv.replaceChildren();
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (currentTotal > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(state.logs.length - newLogsCount);
+
+        const fragment = document.createDocumentFragment();
+        for (const l of newLogs) {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const timeMatch = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)/);
+          if (timeMatch) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = timeMatch[1];
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(` ${timeMatch[2]}`));
+          } else {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = 'System';
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(` ${l}`));
+          }
+          fragment.appendChild(entry);
+        }
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = currentTotal;
+
+        // Cap rendered DOM elements to 50
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
@@ -118,8 +159,14 @@
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
       
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
+      const entry = document.createElement('div');
+      entry.className = 'oo-log-entry';
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'oo-log-time';
+      timeSpan.textContent = 'System';
+      entry.appendChild(timeSpan);
+      entry.appendChild(document.createTextNode(' Auto-activated upon entering AI Studio.'));
+      logsDiv.appendChild(entry);
       logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });
@@ -141,7 +188,14 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
+    const entry = document.createElement('div');
+    entry.className = 'oo-log-entry';
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'oo-log-time';
+    timeSpan.textContent = 'System';
+    entry.appendChild(timeSpan);
+    entry.appendChild(document.createTextNode(' Memory cleared.'));
+    logsDiv.appendChild(entry);
     logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
