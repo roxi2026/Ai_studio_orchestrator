@@ -62,14 +62,15 @@ class LocalSLMEngine {
 class SmartAgent {
   static async getContext(el) {
     // Extract surrounding context (labels, preceding text)
+    // Use textContent instead of innerText to prevent forced layout reflows
     let context = '';
     if (el.id) {
       const label = document.querySelector(`label[for="${el.id}"]`);
-      if (label) context += label.innerText + ' ';
+      if (label) context += label.textContent + ' ';
     }
     const parent = el.parentElement;
     if (parent) {
-      context += parent.innerText.substring(0, 100);
+      context += parent.textContent.substring(0, 100);
     }
     return context.trim();
   }
@@ -159,7 +160,7 @@ class SmartAgent {
         if (actualValue !== expectedValue) throw new Error(`Assertion failed: ${selector} value is "${actualValue}", expected "${expectedValue}"`);
         break;
       case 'text':
-        actualValue = el.innerText.trim();
+        actualValue = el.textContent.trim();
         if (!actualValue.includes(expectedValue)) throw new Error(`Assertion failed: ${selector} text "${actualValue}" does not contain "${expectedValue}"`);
         break;
       case 'checked':
@@ -180,7 +181,7 @@ class SmartAgent {
     let maxScore = -1;
 
     for (const btn of buttons) {
-      const text = (btn.innerText || btn.value || '').toLowerCase().trim();
+      const text = (btn.textContent || btn.value || '').toLowerCase().trim();
       if (!text) continue;
       
       // Is it visible?
@@ -203,7 +204,7 @@ class SmartAgent {
     }
 
     if (bestButton) {
-      const btnText = bestButton.innerText || bestButton.value;
+      const btnText = bestButton.textContent || bestButton.value;
       bestButton.click();
       
       // Wait for potential animations or DOM updates
@@ -259,9 +260,9 @@ class SmartAgent {
     const passFieldAfter = document.querySelector('input[type="password"]');
     const isStillVisible = passFieldAfter && passFieldAfter.offsetWidth > 0;
     
-    // Check for common error messages
+    // Check for common error messages (using textContent to prevent forced layout reflows)
     const errorText = Array.from(document.querySelectorAll('.error, .alert, .message, [role="alert"]'))
-      .map(el => el.innerText.toLowerCase())
+      .map(el => el.textContent.toLowerCase())
       .find(t => t.includes('incorrect') || t.includes('invalid') || t.includes('wrong') || t.includes('fail'));
 
     if (isStillVisible && errorText) {
@@ -375,6 +376,7 @@ async function executePuppetCommand(commandStr) {
     case 'EXTRACT_TEXT': {
       const el = target ? document.querySelector(target) : document.body;
       if (!el) throw new Error(`Element not found: ${target}`);
+      // Use innerText to preserve visible rendered text and avoid script/style tag pollution
       return { type: 'text', content: el.innerText.substring(0, 10000) }; // Cap length to avoid token limits
     }
       
@@ -385,11 +387,19 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
-        .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
-        .filter(link => link.text.length > 0);
-      return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
+      // Single-pass extraction using a[href] and textContent to prevent layout thrashing
+      const anchors = document.querySelectorAll('a[href]');
+      const links = [];
+      for (let i = 0; i < anchors.length && links.length < 50; i++) {
+        const a = anchors[i];
+        if (a.href.startsWith('http')) {
+          const text = a.textContent.trim();
+          if (text.length > 0) {
+            links.push({ text, href: a.href });
+          }
+        }
+      }
+      return { type: 'links', count: links.length, content: links };
     }
       
     case 'CLICK': {
@@ -535,13 +545,13 @@ async function executePuppetCommand(commandStr) {
     }
 
     case 'EXTRACT_SPATIAL': {
-      // Get interactive elements with their bounding boxes
+      // Get interactive elements with their bounding boxes (using textContent to avoid forced reflows)
       const interactives = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"]'));
       const spatialData = interactives.map(el => {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
@@ -662,7 +672,7 @@ async function executePuppetCommand(commandStr) {
       
       const getMetaContent = (selector) => {
         const el = document.querySelector(selector);
-        return el ? (el.content || el.innerText || el.textContent).trim() : null;
+        return el ? (el.content || el.textContent).trim() : null;
       };
 
       metadata.title = getMetaContent('meta[property="og:title"]') || getMetaContent('title') || getMetaContent('h1');
