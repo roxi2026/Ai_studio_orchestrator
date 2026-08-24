@@ -60,22 +60,21 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+    // Bolt ⚡ Optimization: Filter network requests by target URL before cloning/reading body
+    // Prevents performance degrade & memory thrashing on static asset and background analytics fetches
+    const rawUrl = args[0] instanceof Request ? args[0].url : String(args[0] || '');
+    if (rawUrl.includes('generateContent') || rawUrl.includes('v1beta') || rawUrl.includes('executor') || rawUrl.includes('reviewer') || rawUrl.includes('prompts')) {
+      const clonedResponse = response.clone();
+      clonedResponse.text().then(text => {
+        const pane = rawUrl.includes('executor') ? 'executor' : (rawUrl.includes('reviewer') ? 'reviewer' : 'unknown');
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {});
+    }
     
     return response;
   };
