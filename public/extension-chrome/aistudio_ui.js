@@ -73,6 +73,8 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +92,44 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // O(1) Incremental Log Rendering using DocumentFragment
+    const currentTotalLogs = typeof state.totalLogs === 'number' ? state.totalLogs : (state.logs ? state.logs.length : 0);
+
+    const isDefaultState = logsDiv.children.length === 1 && logsDiv.children[0].textContent.includes('Central Command (CC) ready');
+    if (currentTotalLogs < lastRenderedTotalLogs || isDefaultState) {
+      logsDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
+    }
+
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
+      const newLogsCount = Math.min(currentTotalLogs - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const newLogs = state.logs.slice(-newLogsCount);
+        const fragment = document.createDocumentFragment();
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+
+        for (const logMsg of newLogs) {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = time;
+
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(` ${logMsg}`));
+          fragment.appendChild(entry);
+        }
+
+        logsDiv.appendChild(fragment);
+
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = currentTotalLogs;
+      }
     }
   }
 
