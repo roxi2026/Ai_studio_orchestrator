@@ -31,10 +31,19 @@ class LocalSLMEngine {
   }
 
   static inferFieldType(el, contextText) {
+    // Fast-path evaluation on element attributes prior to string concatenation and lowercasing
+    const type = (el.type || '').toLowerCase();
+    if (type === 'password') return 'password';
+    if (type === 'email') return 'email';
+    if (type === 'tel') return 'phone';
+
     const name = (el.name || '').toLowerCase();
     const id = (el.id || '').toLowerCase();
+
+    if (name.includes('password') || id.includes('password')) return 'password';
+    if (name.includes('email') || id.includes('email')) return 'email';
+
     const placeholder = (el.placeholder || '').toLowerCase();
-    const type = (el.type || '').toLowerCase();
     const combined = `${name} ${id} ${placeholder} ${contextText.toLowerCase()}`;
 
     if (combined.includes('email')) return 'email';
@@ -50,9 +59,6 @@ class LocalSLMEngine {
     if (combined.includes('country')) return 'country';
     if (combined.includes('password')) return 'password';
     if (combined.includes('user') && combined.includes('name')) return 'username';
-    if (type === 'password') return 'password';
-    if (type === 'email') return 'email';
-    if (type === 'tel') return 'phone';
     
     return 'unknown';
   }
@@ -62,14 +68,15 @@ class LocalSLMEngine {
 class SmartAgent {
   static async getContext(el) {
     // Extract surrounding context (labels, preceding text)
+    // Use textContent instead of innerText to prevent layout recalculation / reflows
     let context = '';
     if (el.id) {
       const label = document.querySelector(`label[for="${el.id}"]`);
-      if (label) context += label.innerText + ' ';
+      if (label) context += (label.textContent || '') + ' ';
     }
     const parent = el.parentElement;
     if (parent) {
-      context += parent.innerText.substring(0, 100);
+      context += (parent.textContent || '').substring(0, 100);
     }
     return context.trim();
   }
@@ -180,7 +187,8 @@ class SmartAgent {
     let maxScore = -1;
 
     for (const btn of buttons) {
-      const text = (btn.innerText || btn.value || '').toLowerCase().trim();
+      // Use textContent to avoid layout reflows during candidate selection
+      const text = (btn.textContent || btn.value || '').toLowerCase().trim();
       if (!text) continue;
       
       // Is it visible?
@@ -203,7 +211,7 @@ class SmartAgent {
     }
 
     if (bestButton) {
-      const btnText = bestButton.innerText || bestButton.value;
+      const btnText = (bestButton.textContent || bestButton.value || '').trim();
       bestButton.click();
       
       // Wait for potential animations or DOM updates
@@ -375,7 +383,8 @@ async function executePuppetCommand(commandStr) {
     case 'EXTRACT_TEXT': {
       const el = target ? document.querySelector(target) : document.body;
       if (!el) throw new Error(`Element not found: ${target}`);
-      return { type: 'text', content: el.innerText.substring(0, 10000) }; // Cap length to avoid token limits
+      // Use textContent to prevent forced layout reflows
+      return { type: 'text', content: (el.textContent || '').substring(0, 10000) }; // Cap length to avoid token limits
     }
       
     case 'EXTRACT_HTML': {
@@ -385,10 +394,20 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
-        .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
-        .filter(link => link.text.length > 0);
+      // Query specifically for <a> elements with an href attribute to narrow initial DOM collection
+      const anchorNodes = document.querySelectorAll('a[href]');
+      const links = [];
+      // Single-pass iteration using textContent to prevent layout thrashing and eliminate array chain allocations
+      for (let i = 0; i < anchorNodes.length; i++) {
+        const a = anchorNodes[i];
+        const href = a.href;
+        if (href && href.startsWith('http')) {
+          const text = (a.textContent || '').trim();
+          if (text.length > 0) {
+            links.push({ text, href });
+          }
+        }
+      }
       return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
     }
       
@@ -541,7 +560,7 @@ async function executePuppetCommand(commandStr) {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
@@ -662,7 +681,7 @@ async function executePuppetCommand(commandStr) {
       
       const getMetaContent = (selector) => {
         const el = document.querySelector(selector);
-        return el ? (el.content || el.innerText || el.textContent).trim() : null;
+        return el ? (el.content || el.textContent || '').trim() : null;
       };
 
       metadata.title = getMetaContent('meta[property="og:title"]') || getMetaContent('title') || getMetaContent('h1');
