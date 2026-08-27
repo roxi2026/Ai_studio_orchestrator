@@ -65,11 +65,11 @@ class SmartAgent {
     let context = '';
     if (el.id) {
       const label = document.querySelector(`label[for="${el.id}"]`);
-      if (label) context += label.innerText + ' ';
+      if (label) context += (label.textContent || '').trim() + ' ';
     }
     const parent = el.parentElement;
     if (parent) {
-      context += parent.innerText.substring(0, 100);
+      context += (parent.innerText || '').trim().substring(0, 100);
     }
     return context.trim();
   }
@@ -180,7 +180,8 @@ class SmartAgent {
     let maxScore = -1;
 
     for (const btn of buttons) {
-      const text = (btn.innerText || btn.value || '').toLowerCase().trim();
+      // Optimization: textContent avoids layout calculation overhead on loops
+      const text = (btn.textContent || btn.value || '').toLowerCase().trim();
       if (!text) continue;
       
       // Is it visible?
@@ -203,7 +204,7 @@ class SmartAgent {
     }
 
     if (bestButton) {
-      const btnText = bestButton.innerText || bestButton.value;
+      const btnText = bestButton.textContent || bestButton.value;
       bestButton.click();
       
       // Wait for potential animations or DOM updates
@@ -375,6 +376,7 @@ async function executePuppetCommand(commandStr) {
     case 'EXTRACT_TEXT': {
       const el = target ? document.querySelector(target) : document.body;
       if (!el) throw new Error(`Element not found: ${target}`);
+      // Note: innerText preserves rendered block line breaks and excludes hidden script/style tags
       return { type: 'text', content: el.innerText.substring(0, 10000) }; // Cap length to avoid token limits
     }
       
@@ -385,11 +387,19 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
-        .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
-        .filter(link => link.text.length > 0);
-      return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
+      // Optimization: Target a[href] directly and use textContent to prevent layout reflow thrashing on anchor tags
+      const rawLinks = document.querySelectorAll('a[href]');
+      const links = [];
+      for (let i = 0; i < rawLinks.length; i++) {
+        const a = rawLinks[i];
+        if (a.href.startsWith('http')) {
+          const text = (a.textContent || '').trim();
+          if (text.length > 0) {
+            links.push({ text, href: a.href });
+          }
+        }
+      }
+      return { type: 'links', count: links.length, content: links.slice(0, 50) };
     }
       
     case 'CLICK': {
@@ -536,12 +546,13 @@ async function executePuppetCommand(commandStr) {
 
     case 'EXTRACT_SPATIAL': {
       // Get interactive elements with their bounding boxes
+      // Optimization: Use textContent instead of innerText to prevent layout thrashing inside map loop
       const interactives = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"]'));
       const spatialData = interactives.map(el => {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
@@ -662,7 +673,7 @@ async function executePuppetCommand(commandStr) {
       
       const getMetaContent = (selector) => {
         const el = document.querySelector(selector);
-        return el ? (el.content || el.innerText || el.textContent).trim() : null;
+        return el ? (el.content || el.textContent).trim() : null;
       };
 
       metadata.title = getMetaContent('meta[property="og:title"]') || getMetaContent('title') || getMetaContent('h1');
@@ -710,6 +721,9 @@ async function executePuppetCommand(commandStr) {
       const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
       const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
       
+      // Optimization: Compute bodyLen once outside the scoring loop to prevent O(N * DOM) re-traversals
+      const bodyLen = clone.textContent.length || 1;
+
       elementsToScore.forEach(el => {
         const text = el.textContent || '';
         const textLen = text.trim().length;
@@ -728,8 +742,7 @@ async function executePuppetCommand(commandStr) {
         const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
         
         // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
-        const sizeRatio = textLen / (bodyLen || 1);
+        const sizeRatio = textLen / bodyLen;
         const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
         
         if (finalScore > maxScore) {
