@@ -73,6 +73,8 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +92,45 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Rendering (O(1) DOM updates via DocumentFragment)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const totalLogs = state.totalLogs || state.logs.length;
+
+      // Reset DOM logs on new run or state reset
+      if (totalLogs < lastRenderedTotalLogs || lastRenderedTotalLogs === 0) {
+        logsDiv.replaceChildren();
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = Math.min(totalLogs - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const newLogs = state.logs.slice(-newLogsCount);
+        const fragment = document.createDocumentFragment();
+        const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+        for (const l of newLogs) {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = timeStr;
+
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(' ' + l));
+          fragment.appendChild(entry);
+        }
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = totalLogs;
+
+        // Maintain max 50 log entries in DOM
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstElementChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 

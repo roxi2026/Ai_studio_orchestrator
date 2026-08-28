@@ -29,6 +29,18 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // Optimization: Selective URL endpoint filter to avoid cloning response bodies
+  // and sending window.postMessage for non-AI Studio API traffic (e.g. static assets, telemetry)
+  function isTargetUrl(url) {
+    if (!url) return false;
+    const urlStr = typeof url === 'string' ? url : (url.url || String(url));
+    return urlStr.includes('generateContent') ||
+           urlStr.includes('v1beta') ||
+           urlStr.includes('executor') ||
+           urlStr.includes('reviewer') ||
+           urlStr.includes('prompts');
+  }
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,8 +48,11 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      const url = xhr.responseURL || '';
+      if (!isTargetUrl(url)) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -60,22 +75,24 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    const urlInput = args[0];
+    if (isTargetUrl(urlInput)) {
+      // Clone the response only for target AI Studio API requests to avoid overhead on static assets/telemetry
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const urlStr = typeof urlInput === 'string' ? urlInput : (urlInput && urlInput.url ? urlInput.url : String(urlInput));
+        const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {});
+    }
     
     return response;
   };
