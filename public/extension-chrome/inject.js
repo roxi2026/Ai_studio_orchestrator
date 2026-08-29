@@ -36,16 +36,18 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
-      // Determine which pane this XHR belongs to based on request URL or payload
-      const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'XHR_RESPONSE',
-        pane: pane,
-        payload: xhr.responseText
-      }, '*');
+      const urlStr = xhr.responseURL || '';
+      // Performance Optimization: Only forward XHR responses from AI Studio target endpoints
+      if (urlStr.includes('generateContent') || urlStr.includes('v1beta') || urlStr.includes('executor') || urlStr.includes('reviewer') || urlStr.includes('prompts')) {
+        const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'XHR_RESPONSE',
+          pane: pane,
+          payload: xhr.responseText
+        }, '*');
+      }
     });
     
     return xhr;
@@ -60,22 +62,27 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Normalize request URL string
+    const requestInput = args[0];
+    const urlStr = typeof requestInput === 'string'
+      ? requestInput
+      : (requestInput && typeof requestInput === 'object' && requestInput.url ? requestInput.url : String(requestInput || ''));
+
+    // Performance Optimization: Only clone and parse text if request is directed to AI Studio target endpoints
+    if (urlStr.includes('generateContent') || urlStr.includes('v1beta') || urlStr.includes('executor') || urlStr.includes('reviewer') || urlStr.includes('prompts')) {
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {});
+    }
     
     return response;
   };
