@@ -74,6 +74,8 @@
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
   // State Management
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,54 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Rendering (O(1) append instead of full DOM teardown)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentTotal = state.totalLogs || state.logs.length;
+
+      // Handle log reset or initial state
+      if (currentTotal < lastRenderedTotalLogs) {
+        logsDiv.innerHTML = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+
+      if (newLogsCount > 0) {
+        const logsToAppend = state.logs.slice(-newLogsCount);
+        const fragment = document.createDocumentFragment();
+
+        logsToAppend.forEach(l => {
+          const entry = document.createElement('div');
+          entry.className = 'oo-log-entry';
+
+          // Extract timestamp if present [HH:MM:SS], otherwise display System
+          const match = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
+          if (match) {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = match[1];
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(' ' + match[2]));
+          } else {
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'oo-log-time';
+            timeSpan.textContent = 'System';
+            entry.appendChild(timeSpan);
+            entry.appendChild(document.createTextNode(' ' + l));
+          }
+          fragment.appendChild(entry);
+        });
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = currentTotal;
+
+        // Cap rendered DOM elements to 50
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 
