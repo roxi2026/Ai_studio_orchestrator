@@ -31,10 +31,18 @@ class LocalSLMEngine {
   }
 
   static inferFieldType(el, contextText) {
+    // Fast-path evaluation of input type attributes before string concatenation
+    const type = (el.type || '').toLowerCase();
+    if (type === 'password') return 'password';
+    if (type === 'email') return 'email';
+    if (type === 'tel') return 'phone';
+
     const name = (el.name || '').toLowerCase();
+    if (name === 'email' || name.endsWith('_email')) return 'email';
+    if (name === 'password' || name === 'pass') return 'password';
+
     const id = (el.id || '').toLowerCase();
     const placeholder = (el.placeholder || '').toLowerCase();
-    const type = (el.type || '').toLowerCase();
     const combined = `${name} ${id} ${placeholder} ${contextText.toLowerCase()}`;
 
     if (combined.includes('email')) return 'email';
@@ -50,9 +58,6 @@ class LocalSLMEngine {
     if (combined.includes('country')) return 'country';
     if (combined.includes('password')) return 'password';
     if (combined.includes('user') && combined.includes('name')) return 'username';
-    if (type === 'password') return 'password';
-    if (type === 'email') return 'email';
-    if (type === 'tel') return 'phone';
     
     return 'unknown';
   }
@@ -180,11 +185,12 @@ class SmartAgent {
     let maxScore = -1;
 
     for (const btn of buttons) {
-      const text = (btn.innerText || btn.value || '').toLowerCase().trim();
-      if (!text) continue;
-      
-      // Is it visible?
+      // Is it visible? Check visibility before computing layout/text properties
       if (btn.offsetWidth === 0 || btn.offsetHeight === 0) continue;
+
+      // Use textContent instead of innerText to prevent forced layout reflows
+      const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+      if (!text) continue;
 
       let score = 0;
       for (const keyword of advanceKeywords) {
@@ -203,7 +209,7 @@ class SmartAgent {
     }
 
     if (bestButton) {
-      const btnText = bestButton.innerText || bestButton.value;
+      const btnText = bestButton.textContent || bestButton.value;
       bestButton.click();
       
       // Wait for potential animations or DOM updates
@@ -375,7 +381,8 @@ async function executePuppetCommand(commandStr) {
     case 'EXTRACT_TEXT': {
       const el = target ? document.querySelector(target) : document.body;
       if (!el) throw new Error(`Element not found: ${target}`);
-      return { type: 'text', content: el.innerText.substring(0, 10000) }; // Cap length to avoid token limits
+      // Use innerText on container nodes to ensure rendered, human-readable text excluding <script>/<style> tags
+      return { type: 'text', content: (el.innerText || '').substring(0, 10000) }; // Cap length to avoid token limits
     }
       
     case 'EXTRACT_HTML': {
@@ -385,9 +392,10 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
+      // Efficiently target elements with a href attribute and use textContent for O(1) text extraction without reflow
+      const links = Array.from(document.querySelectorAll('a[href]'))
         .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
+        .map(a => ({ text: (a.textContent || '').trim(), href: a.href }))
         .filter(link => link.text.length > 0);
       return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
     }
@@ -541,7 +549,8 @@ async function executePuppetCommand(commandStr) {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          // Use textContent instead of innerText to avoid forced layout reflows
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
@@ -706,6 +715,9 @@ async function executePuppetCommand(commandStr) {
       let bestEl = clone;
       let maxScore = -1;
       
+      // Hoist total clone text length calculation outside the loop to eliminate O(N * M) repeated string serializations
+      const bodyLen = clone.textContent ? clone.textContent.length : 1;
+
       // Look for semantic article containers first
       const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
       const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
@@ -728,7 +740,6 @@ async function executePuppetCommand(commandStr) {
         const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
         
         // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
         const sizeRatio = textLen / (bodyLen || 1);
         const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
         
