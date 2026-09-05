@@ -31,11 +31,22 @@ class LocalSLMEngine {
   }
 
   static inferFieldType(el, contextText) {
+    // Fast path: Check specific HTML input types first
+    const type = (el.type || '').toLowerCase();
+    if (type === 'password') return 'password';
+    if (type === 'email') return 'email';
+    if (type === 'tel') return 'phone';
+
+    // Fast path: Check element attributes before lowercasing contextText
     const name = (el.name || '').toLowerCase();
     const id = (el.id || '').toLowerCase();
     const placeholder = (el.placeholder || '').toLowerCase();
-    const type = (el.type || '').toLowerCase();
-    const combined = `${name} ${id} ${placeholder} ${contextText.toLowerCase()}`;
+
+    if (name.includes('email') || id.includes('email') || placeholder.includes('email')) return 'email';
+    if (name.includes('password') || id.includes('password') || placeholder.includes('password')) return 'password';
+    if (name.includes('phone') || id.includes('phone') || name.includes('tel') || id.includes('tel')) return 'phone';
+
+    const combined = `${name} ${id} ${placeholder} ${(contextText || '').toLowerCase()}`;
 
     if (combined.includes('email')) return 'email';
     if (combined.includes('first') && combined.includes('name')) return 'firstName';
@@ -50,9 +61,6 @@ class LocalSLMEngine {
     if (combined.includes('country')) return 'country';
     if (combined.includes('password')) return 'password';
     if (combined.includes('user') && combined.includes('name')) return 'username';
-    if (type === 'password') return 'password';
-    if (type === 'email') return 'email';
-    if (type === 'tel') return 'phone';
     
     return 'unknown';
   }
@@ -61,15 +69,15 @@ class LocalSLMEngine {
 // --- Smart Agent for Dynamic Interactions ---
 class SmartAgent {
   static async getContext(el) {
-    // Extract surrounding context (labels, preceding text)
+    // Extract surrounding context (labels, preceding text) using textContent to avoid layout reflows
     let context = '';
     if (el.id) {
       const label = document.querySelector(`label[for="${el.id}"]`);
-      if (label) context += label.innerText + ' ';
+      if (label) context += (label.textContent || '') + ' ';
     }
     const parent = el.parentElement;
     if (parent) {
-      context += parent.innerText.substring(0, 100);
+      context += (parent.textContent || '').substring(0, 100);
     }
     return context.trim();
   }
@@ -385,9 +393,10 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
+      // Query a[href] and use textContent to avoid triggering layout reflows on all link elements
+      const links = Array.from(document.querySelectorAll('a[href]'))
         .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
+        .map(a => ({ text: (a.textContent || '').trim(), href: a.href }))
         .filter(link => link.text.length > 0);
       return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
     }
@@ -535,13 +544,13 @@ async function executePuppetCommand(commandStr) {
     }
 
     case 'EXTRACT_SPATIAL': {
-      // Get interactive elements with their bounding boxes
+      // Get interactive elements with bounding boxes, using textContent to prevent forced layout reflows
       const interactives = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"]'));
       const spatialData = interactives.map(el => {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
@@ -710,6 +719,9 @@ async function executePuppetCommand(commandStr) {
       const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
       const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
       
+      // Hoist document text length computation outside scoring loop to prevent O(N*M) DOM traversals
+      const bodyLen = (clone.textContent || '').length || 1;
+
       elementsToScore.forEach(el => {
         const text = el.textContent || '';
         const textLen = text.trim().length;
@@ -728,8 +740,7 @@ async function executePuppetCommand(commandStr) {
         const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
         
         // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
-        const sizeRatio = textLen / (bodyLen || 1);
+        const sizeRatio = textLen / bodyLen;
         const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
         
         if (finalScore > maxScore) {
