@@ -60,22 +60,23 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+    // Performance Optimization: Filter responses by URL before cloning/reading body to avoid CPU/memory overhead on static assets
+    const rawUrl = args[0] instanceof Request ? args[0].url : (args[0] instanceof URL ? args[0].href : String(args[0] || ''));
+    if (rawUrl && (rawUrl.includes('generateContent') || rawUrl.includes('v1beta') || rawUrl.includes('executor') || rawUrl.includes('reviewer') || rawUrl.includes('prompts'))) {
+      const clonedResponse = response.clone();
       
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+      clonedResponse.text().then(text => {
+        const pane = rawUrl.includes('executor') ? 'executor' : (rawUrl.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {});
+    }
     
     return response;
   };

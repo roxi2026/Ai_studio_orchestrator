@@ -73,6 +73,8 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
+  let lastRenderedTotalLogs = 0;
+
   // State Management
   function updateUI(state) {
     if (!state) return;
@@ -90,13 +92,38 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Render Logs Incrementally O(1)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentTotal = state.totalLogs !== undefined ? state.totalLogs : state.logs.length;
+
+      // Handle initial default log message or state reset
+      if (logsDiv.children.length === 1 && logsDiv.children[0].textContent.includes('ready and awaiting instructions')) {
+        logsDiv.textContent = '';
+      } else if (currentTotal < lastRenderedTotalLogs) {
+        logsDiv.textContent = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newLogsCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+      if (newLogsCount > 0) {
+        const fragment = document.createDocumentFragment();
+        const newEntries = state.logs.slice(state.logs.length - newLogsCount);
+        for (const logText of newEntries) {
+          const div = document.createElement('div');
+          div.className = 'oo-log-entry';
+          div.textContent = logText;
+          fragment.appendChild(div);
+        }
+        logsDiv.appendChild(fragment);
+
+        // Cap DOM elements at 50
+        while (logsDiv.children.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        lastRenderedTotalLogs = currentTotal;
+      }
     }
   }
 
