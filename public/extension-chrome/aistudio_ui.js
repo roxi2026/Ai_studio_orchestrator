@@ -73,7 +73,9 @@
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
 
-  // State Management
+  // State Management & Incremental Log Rendering Optimization
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     if (!state) return;
     
@@ -90,13 +92,45 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
+    // Incremental Log Rendering (O(1) append instead of full O(N) DOM re-render)
     if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
-      logsDiv.scrollTop = logsDiv.scrollHeight;
+      const currentTotal = state.totalLogs || state.logs.length;
+
+      // Handle state reset or backwards state shift
+      if (currentTotal < lastRenderedTotalLogs) {
+        logsDiv.textContent = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+      if (newCount > 0) {
+        const newLogs = state.logs.slice(-newCount);
+        const fragment = document.createDocumentFragment();
+        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        for (const logMsg of newLogs) {
+          const entryDiv = document.createElement('div');
+          entryDiv.className = 'oo-log-entry';
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = time;
+
+          entryDiv.appendChild(timeSpan);
+          entryDiv.appendChild(document.createTextNode(' ' + logMsg));
+          fragment.appendChild(entryDiv);
+        }
+
+        logsDiv.appendChild(fragment);
+        lastRenderedTotalLogs = currentTotal;
+
+        // Trim old elements if count exceeds capacity (50 cap)
+        while (logsDiv.childNodes.length > 50) {
+          logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+      }
     }
   }
 

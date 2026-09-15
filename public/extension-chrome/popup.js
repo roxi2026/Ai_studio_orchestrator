@@ -6,6 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +18,41 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental Log Rendering (O(1) append instead of full O(N) DOM re-render)
+    if (state.logs && state.logs.length > 0) {
+      const currentTotal = state.totalLogs || state.logs.length;
+
+      // Handle state reset or backwards state shift
+      if (currentTotal < lastRenderedTotalLogs) {
+        logDiv.textContent = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      const newCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+      if (newCount > 0) {
+        const newLogs = state.logs.slice(-newCount);
+        const fragment = document.createDocumentFragment();
+
+        for (const logMsg of newLogs) {
+          const itemDiv = document.createElement('div');
+          itemDiv.textContent = '> ' + logMsg;
+          fragment.appendChild(itemDiv);
+        }
+
+        logDiv.appendChild(fragment);
+        lastRenderedTotalLogs = currentTotal;
+
+        // Trim old elements if count exceeds capacity (50 cap)
+        while (logDiv.childNodes.length > 50) {
+          logDiv.removeChild(logDiv.firstChild);
+        }
+
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+    } else if (!state.logs || state.logs.length === 0) {
+      logDiv.textContent = '';
+      lastRenderedTotalLogs = 0;
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
