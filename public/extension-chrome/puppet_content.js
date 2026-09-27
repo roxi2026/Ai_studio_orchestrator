@@ -31,11 +31,25 @@ class LocalSLMEngine {
   }
 
   static inferFieldType(el, contextText) {
+    // Fast-path 1: Check explicit HTML input types first
+    const type = (el.type || '').toLowerCase();
+    if (type === 'password') return 'password';
+    if (type === 'email') return 'email';
+    if (type === 'tel') return 'phone';
+
+    // Fast-path 2: Check explicit element name/id before expensive string concatenation and context lowercasing
     const name = (el.name || '').toLowerCase();
     const id = (el.id || '').toLowerCase();
+
+    if (name.includes('email') || id.includes('email')) return 'email';
+    if (name.includes('password') || id.includes('password') || name.includes('pass') || id.includes('pass')) return 'password';
+    if ((name.includes('first') && name.includes('name')) || (id.includes('first') && id.includes('name'))) return 'firstName';
+    if ((name.includes('last') && name.includes('name')) || (id.includes('last') && id.includes('name'))) return 'lastName';
+    if (name.includes('phone') || id.includes('phone') || name.includes('tel') || id.includes('tel')) return 'phone';
+
+    // Fallback: Full string concatenation and search
     const placeholder = (el.placeholder || '').toLowerCase();
-    const type = (el.type || '').toLowerCase();
-    const combined = `${name} ${id} ${placeholder} ${contextText.toLowerCase()}`;
+    const combined = `${name} ${id} ${placeholder} ${(contextText || '').toLowerCase()}`;
 
     if (combined.includes('email')) return 'email';
     if (combined.includes('first') && combined.includes('name')) return 'firstName';
@@ -50,10 +64,7 @@ class LocalSLMEngine {
     if (combined.includes('country')) return 'country';
     if (combined.includes('password')) return 'password';
     if (combined.includes('user') && combined.includes('name')) return 'username';
-    if (type === 'password') return 'password';
-    if (type === 'email') return 'email';
-    if (type === 'tel') return 'phone';
-    
+
     return 'unknown';
   }
 }
@@ -385,9 +396,10 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
-        .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
+      // Query a[href] directly to avoid checking anchor tags without hrefs and use textContent to avoid forced reflows
+      const links = Array.from(document.querySelectorAll('a[href]'))
+        .filter(a => a.href.startsWith('http'))
+        .map(a => ({ text: (a.textContent || '').trim(), href: a.href }))
         .filter(link => link.text.length > 0);
       return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
     }
@@ -541,7 +553,7 @@ async function executePuppetCommand(commandStr) {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
@@ -710,6 +722,9 @@ async function executePuppetCommand(commandStr) {
       const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
       const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
       
+      // Hoist document body text length calculation outside the candidate scoring loop
+      const bodyLen = (clone.textContent || '').length;
+
       elementsToScore.forEach(el => {
         const text = el.textContent || '';
         const textLen = text.trim().length;
@@ -728,7 +743,6 @@ async function executePuppetCommand(commandStr) {
         const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
         
         // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
         const sizeRatio = textLen / (bodyLen || 1);
         const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
         
