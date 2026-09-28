@@ -29,6 +29,17 @@
   // Copy prototype to ensure compatibility
   window.WebSocket.prototype = OriginalWebSocket.prototype;
 
+  // --- URL Selective Filtering ---
+  // Optimization: Filter out static assets, telemetry, fonts, and unrelated requests early.
+  // Only clone and inspect responses for relevant AI Studio API endpoints.
+  const TARGET_API_PATTERNS = ['generateContent', 'v1beta', 'executor', 'reviewer', 'prompts'];
+
+  function isTargetApiUrl(urlInput) {
+    if (!urlInput) return false;
+    const urlStr = typeof urlInput === 'string' ? urlInput : (urlInput instanceof Request ? urlInput.url : String(urlInput));
+    return TARGET_API_PATTERNS.some(pattern => urlStr.includes(pattern));
+  }
+
   // --- XMLHttpRequest Interception ---
   const OriginalXHR = window.XMLHttpRequest;
   
@@ -36,6 +47,8 @@
     const xhr = new OriginalXHR();
     
     xhr.addEventListener('load', function() {
+      if (!isTargetApiUrl(xhr.responseURL)) return;
+
       // Determine which pane this XHR belongs to based on request URL or payload
       const pane = xhr.responseURL.includes('executor') ? 'executor' : (xhr.responseURL.includes('reviewer') ? 'reviewer' : 'unknown');
       
@@ -60,13 +73,18 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
+    const requestUrl = args[0];
+    if (!isTargetApiUrl(requestUrl)) {
+      return response;
+    }
+
     // Clone the response so we can read the body without consuming it for the original caller
     const clonedResponse = response.clone();
     
     clonedResponse.text().then(text => {
+      const urlStr = typeof requestUrl === 'string' ? requestUrl : (requestUrl instanceof Request ? requestUrl.url : String(requestUrl));
       // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+      const pane = urlStr.includes('executor') ? 'executor' : (urlStr.includes('reviewer') ? 'reviewer' : 'unknown');
       
       // Forward the intercepted response to the content script
       window.postMessage({
@@ -75,6 +93,8 @@
         pane: pane,
         payload: text
       }, '*');
+    }).catch(err => {
+      // Ignore read errors for aborted/closed streams
     });
     
     return response;
