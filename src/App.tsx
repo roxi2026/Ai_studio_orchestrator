@@ -23,12 +23,18 @@ export default function App() {
     ];
 
     try {
-      for (const file of files) {
+      // Optimize asset fetching by retrieving extension files in parallel with Promise.all
+      const filePromises = files.map(async (file) => {
         const response = await fetch(`/extension-chrome/${file}`);
         if (!response.ok) throw new Error(`Failed to fetch ${file}`);
         const content = await response.text();
+        return { file, content };
+      });
+
+      const fetchedFiles = await Promise.all(filePromises);
+      fetchedFiles.forEach(({ file, content }) => {
         zip.file(file, content);
-      }
+      });
 
       const content = await zip.generateAsync({ type: 'blob' });
       saveAs(content, `omnipotent-ai-orchestrator-v8.0-chrome.zip`);
