@@ -31,10 +31,20 @@ class LocalSLMEngine {
   }
 
   static inferFieldType(el, contextText) {
+    // Fast-path direct type evaluation to avoid unnecessary string concatenation and context searching
+    const type = (el.type || '').toLowerCase();
+    if (type === 'email') return 'email';
+    if (type === 'password') return 'password';
+    if (type === 'tel') return 'phone';
+
     const name = (el.name || '').toLowerCase();
     const id = (el.id || '').toLowerCase();
     const placeholder = (el.placeholder || '').toLowerCase();
-    const type = (el.type || '').toLowerCase();
+
+    // Fast-path attribute evaluation before contextText lowercasing & concatenation
+    if (name.includes('email') || id.includes('email') || placeholder.includes('email')) return 'email';
+    if (name.includes('password') || id.includes('password') || placeholder.includes('password')) return 'password';
+
     const combined = `${name} ${id} ${placeholder} ${contextText.toLowerCase()}`;
 
     if (combined.includes('email')) return 'email';
@@ -50,9 +60,6 @@ class LocalSLMEngine {
     if (combined.includes('country')) return 'country';
     if (combined.includes('password')) return 'password';
     if (combined.includes('user') && combined.includes('name')) return 'username';
-    if (type === 'password') return 'password';
-    if (type === 'email') return 'email';
-    if (type === 'tel') return 'phone';
     
     return 'unknown';
   }
