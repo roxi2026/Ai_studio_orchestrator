@@ -710,6 +710,11 @@ async function executePuppetCommand(commandStr) {
       const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
       const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
       
+      // OPTIMIZATION: Hoist clone text length calculation outside the candidate scoring loop.
+      // Computing clone.textContent triggers full DOM tree string concatenation on every iteration.
+      // Hoisting reduces complexity from O(K * N) to O(K + N) for K elements and N DOM nodes.
+      const bodyLen = (clone.textContent || '').length || 1;
+
       elementsToScore.forEach(el => {
         const text = el.textContent || '';
         const textLen = text.trim().length;
@@ -728,8 +733,7 @@ async function executePuppetCommand(commandStr) {
         const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
         
         // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
-        const sizeRatio = textLen / (bodyLen || 1);
+        const sizeRatio = textLen / bodyLen;
         const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
         
         if (finalScore > maxScore) {
