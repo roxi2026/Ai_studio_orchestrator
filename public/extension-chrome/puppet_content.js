@@ -180,7 +180,8 @@ class SmartAgent {
     let maxScore = -1;
 
     for (const btn of buttons) {
-      const text = (btn.innerText || btn.value || '').toLowerCase().trim();
+      // Use textContent instead of innerText to avoid forcing layout reflows during scoring loop
+      const text = (btn.textContent || btn.value || '').toLowerCase().trim();
       if (!text) continue;
       
       // Is it visible?
@@ -203,7 +204,7 @@ class SmartAgent {
     }
 
     if (bestButton) {
-      const btnText = bestButton.innerText || bestButton.value;
+      const btnText = (bestButton.textContent || bestButton.value || '').trim();
       bestButton.click();
       
       // Wait for potential animations or DOM updates
@@ -385,9 +386,10 @@ async function executePuppetCommand(commandStr) {
     }
       
     case 'GET_LINKS': {
-      const links = Array.from(document.querySelectorAll('a'))
+      // Query a[href] directly and use textContent to prevent forced layout reflows on all link elements
+      const links = Array.from(document.querySelectorAll('a[href]'))
         .filter(a => a.href && a.href.startsWith('http'))
-        .map(a => ({ text: a.innerText.trim(), href: a.href }))
+        .map(a => ({ text: a.textContent.trim(), href: a.href }))
         .filter(link => link.text.length > 0);
       return { type: 'links', count: links.length, content: links.slice(0, 50) }; // Max 50 links
     }
@@ -537,11 +539,12 @@ async function executePuppetCommand(commandStr) {
     case 'EXTRACT_SPATIAL': {
       // Get interactive elements with their bounding boxes
       const interactives = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"]'));
+      // Use textContent instead of innerText to prevent layout reflows during batch element processing
       const spatialData = interactives.map(el => {
         const rect = el.getBoundingClientRect();
         return {
           tag: el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
+          text: (el.textContent || el.value || el.placeholder || el.title || '').trim().substring(0, 50),
           id: el.id,
           className: el.className,
           x: Math.round(rect.x),
