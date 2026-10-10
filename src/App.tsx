@@ -23,10 +23,16 @@ export default function App() {
     ];
 
     try {
-      for (const file of files) {
+      // Parallelize file downloads to reduce zip packaging latency
+      const filePromises = files.map(async (file) => {
         const response = await fetch(`/extension-chrome/${file}`);
         if (!response.ok) throw new Error(`Failed to fetch ${file}`);
         const content = await response.text();
+        return { file, content };
+      });
+
+      const fetchedFiles = await Promise.all(filePromises);
+      for (const { file, content } of fetchedFiles) {
         zip.file(file, content);
       }
 
