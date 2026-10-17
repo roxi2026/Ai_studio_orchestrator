@@ -23,14 +23,18 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
 };
 
 function log(message) {
-  console.log(`[CC] ${message}`);
-  state.logs.push(message);
+  const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+  const formattedMsg = `[${timestamp}] ${message}`;
+  console.log(`[CC] ${formattedMsg}`);
+  state.logs.push(formattedMsg);
+  state.totalLogs = (state.totalLogs || 0) + 1;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -40,7 +44,12 @@ function saveState() {
 }
 
 chrome.storage.local.get(['orchestratorState'], (result) => {
-  if (result.orchestratorState) state = result.orchestratorState;
+  if (result.orchestratorState) {
+    state = result.orchestratorState;
+    if (typeof state.totalLogs !== 'number') {
+      state.totalLogs = state.logs ? state.logs.length : 0;
+    }
+  }
 });
 
 // --- Auto-Activation & Session Handoff ---
@@ -96,6 +105,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });

@@ -44,9 +44,7 @@
 
         <div class="oo-input-group">
           <label class="oo-label">Live Telemetry</label>
-          <div id="oo-logs" class="oo-logs">
-            <div class="oo-log-entry"><span class="oo-log-time">System</span> Central Command (CC) ready and awaiting instructions.</div>
-          </div>
+          <div id="oo-logs" class="oo-logs"></div>
         </div>
       </div>
       <div class="oo-status-bar">
@@ -69,6 +67,8 @@
   const statusDot = document.getElementById('oo-status-dot');
   const statusText = document.getElementById('oo-status-text');
 
+  let lastRenderedTotalLogs = 0;
+
   // Toggle Logic
   minimizeBtn.addEventListener('click', () => root.classList.add('minimized'));
   maximizeBtn.addEventListener('click', () => root.classList.remove('minimized'));
@@ -90,13 +90,48 @@
       goalInput.value = state.goal;
     }
 
-    // Render Logs
-    if (state.logs && state.logs.length > 0) {
-      logsDiv.innerHTML = state.logs.map(l => {
-        const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        return `<div class="oo-log-entry"><span class="oo-log-time">${time}</span> ${l}</div>`;
-      }).join('');
+    // Incremental log rendering using DocumentFragment and textNode for O(1) performance
+    const currentTotal = state.totalLogs || (state.logs ? state.logs.length : 0);
+
+    if (currentTotal < lastRenderedTotalLogs) {
+      logsDiv.replaceChildren();
+      lastRenderedTotalLogs = 0;
+    }
+
+    if (state.logs && state.logs.length > 0 && currentTotal > lastRenderedTotalLogs) {
+      const newLogsCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+      const newLogs = state.logs.slice(-newLogsCount);
+
+      const fragment = document.createDocumentFragment();
+      for (const logMsg of newLogs) {
+        const entry = document.createElement('div');
+        entry.className = 'oo-log-entry';
+
+        const match = logMsg.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
+        if (match) {
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = match[1];
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(' ' + match[2]));
+        } else {
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'oo-log-time';
+          timeSpan.textContent = 'System';
+          entry.appendChild(timeSpan);
+          entry.appendChild(document.createTextNode(' ' + logMsg));
+        }
+        fragment.appendChild(entry);
+      }
+
+      logsDiv.appendChild(fragment);
+
+      while (logsDiv.children.length > 50) {
+        logsDiv.removeChild(logsDiv.firstChild);
+      }
+
       logsDiv.scrollTop = logsDiv.scrollHeight;
+      lastRenderedTotalLogs = currentTotal;
     }
   }
 
@@ -117,10 +152,6 @@
     if (msg.action === 'AUTO_ACTIVATE') {
       root.classList.remove('minimized');
       if (msg.state) updateUI(msg.state);
-      
-      // Add a welcome log
-      logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Auto-activated upon entering AI Studio.</div>`;
-      logsDiv.scrollTop = logsDiv.scrollHeight;
     }
   });
 
@@ -141,8 +172,6 @@
 
   clearMemBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'CLEAR_MEMORY' });
-    logsDiv.innerHTML += `<div class="oo-log-entry"><span class="oo-log-time">System</span> Memory cleared.</div>`;
-    logsDiv.scrollTop = logsDiv.scrollHeight;
   });
 
   // Auto-activate on load
