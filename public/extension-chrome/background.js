@@ -23,6 +23,7 @@ let state = {
   goal: '',
   memory: {},
   logs: [],
+  totalLogs: 0,
   brainTabId: null,
   puppetTabId: null,
   pendingPrompt: null
@@ -31,6 +32,7 @@ let state = {
 function log(message) {
   console.log(`[CC] ${message}`);
   state.logs.push(message);
+  state.totalLogs = (state.totalLogs || 0) + 1;
   if (state.logs.length > 50) state.logs.shift();
   saveState();
 }
@@ -96,6 +98,7 @@ async function startOrchestration(goal) {
   state.status = 'Running';
   state.memory = {};
   state.logs = [];
+  state.totalLogs = 0;
   log('Initializing Central Command (CC)...');
   
   const tabs = await chrome.tabs.query({ url: 'https://aistudio.google.com/*' });
