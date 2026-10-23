@@ -60,22 +60,43 @@
   window.fetch = async function(...args) {
     const response = await originalFetch.apply(this, args);
     
-    // Clone the response so we can read the body without consuming it for the original caller
-    const clonedResponse = response.clone();
-    
-    clonedResponse.text().then(text => {
-      // Determine which pane this fetch belongs to based on request URL or payload
-      const url = args[0] instanceof Request ? args[0].url : args[0];
-      const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
-      
-      // Forward the intercepted response to the content script
-      window.postMessage({
-        source: 'ORCHESTRATOR_INJECT',
-        type: 'FETCH_RESPONSE',
-        pane: pane,
-        payload: text
-      }, '*');
-    });
+    // Performance Optimization: Safely normalize request URL to filter before response cloning.
+    // Cloning responses and reading text on all fetch calls (assets, fonts, telemetry) creates heavy memory bloat and event loop churn.
+    let url = '';
+    if (args[0]) {
+      if (typeof args[0] === 'string') {
+        url = args[0];
+      } else if (args[0] instanceof Request) {
+        url = args[0].url;
+      } else if (args[0] instanceof URL) {
+        url = args[0].toString();
+      } else {
+        url = String(args[0]);
+      }
+    }
+
+    // Only clone and parse response text for relevant AI Studio API calls
+    const isTargetApi = url.includes('generateContent') ||
+                        url.includes('v1beta') ||
+                        url.includes('executor') ||
+                        url.includes('reviewer') ||
+                        url.includes('prompts') ||
+                        url.includes('batchexecute');
+
+    if (isTargetApi) {
+      const clonedResponse = response.clone();
+      clonedResponse.text().then(text => {
+        const pane = url.includes('executor') ? 'executor' : (url.includes('reviewer') ? 'reviewer' : 'unknown');
+
+        // Forward the intercepted response to the content script
+        window.postMessage({
+          source: 'ORCHESTRATOR_INJECT',
+          type: 'FETCH_RESPONSE',
+          pane: pane,
+          payload: text
+        }, '*');
+      }).catch(() => {});
+    }
     
     return response;
   };
