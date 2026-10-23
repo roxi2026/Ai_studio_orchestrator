@@ -31,10 +31,15 @@ class LocalSLMEngine {
   }
 
   static inferFieldType(el, contextText) {
+    // Fast-path evaluation of direct input types before string concatenation & lowercasing
+    const type = (el.type || '').toLowerCase();
+    if (type === 'email') return 'email';
+    if (type === 'password') return 'password';
+    if (type === 'tel') return 'phone';
+
     const name = (el.name || '').toLowerCase();
     const id = (el.id || '').toLowerCase();
     const placeholder = (el.placeholder || '').toLowerCase();
-    const type = (el.type || '').toLowerCase();
     const combined = `${name} ${id} ${placeholder} ${contextText.toLowerCase()}`;
 
     if (combined.includes('email')) return 'email';
@@ -50,9 +55,6 @@ class LocalSLMEngine {
     if (combined.includes('country')) return 'country';
     if (combined.includes('password')) return 'password';
     if (combined.includes('user') && combined.includes('name')) return 'username';
-    if (type === 'password') return 'password';
-    if (type === 'email') return 'email';
-    if (type === 'tel') return 'phone';
     
     return 'unknown';
   }
@@ -710,6 +712,9 @@ async function executePuppetCommand(commandStr) {
       const candidates = clone.querySelectorAll('article, main, [role="main"], .post-content, .article-content, .entry-content, div.content, div.article, section');
       const elementsToScore = candidates.length > 0 ? Array.from(candidates) : Array.from(clone.querySelectorAll('div, section, main'));
       
+      // Hoist total clone body text length calculation outside candidate scoring loop to eliminate O(M * N) string concatenations
+      const bodyLen = (clone.textContent || '').length;
+
       elementsToScore.forEach(el => {
         const text = el.textContent || '';
         const textLen = text.trim().length;
@@ -728,7 +733,6 @@ async function executePuppetCommand(commandStr) {
         const score = textLen - (textLen * linkDensity * 2) + (pCount * 50);
         
         // Ensure we don't just pick the body wrapper if a more specific container is better
-        const bodyLen = clone.textContent.length;
         const sizeRatio = textLen / (bodyLen || 1);
         const finalScore = sizeRatio > 0.95 ? score * 0.8 : score; 
         
