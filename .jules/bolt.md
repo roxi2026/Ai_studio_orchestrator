@@ -1,0 +1,3 @@
+## 2025-02-17 - Hoisting DOM Text Length Calculations & Reflow Avoidance in Puppet Script
+**Learning:** In candidate element scoring algorithms (like `READ_ARTICLE`), re-evaluating `clone.textContent.length` inside the candidate loop computes the full DOM text serialization repeatedly in O(N * M) time. Furthermore, calling `innerText` on leaf interactive elements triggers synchronous layout recalculations (reflows) whereas `textContent` extracts node text content without layout flushes.
+**Action:** Always hoist whole-document DOM string computations outside candidate iteration loops, and prefer `textContent` over `innerText` for leaf element text extractions during web scraping and DOM analysis.
