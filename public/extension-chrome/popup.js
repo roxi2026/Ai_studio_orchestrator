@@ -6,6 +6,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const logDiv = document.getElementById('log');
   const memoryDiv = document.getElementById('memory');
 
+  let lastRenderedTotalLogs = 0;
+
+  function createLogNode(message) {
+    const div = document.createElement('div');
+    div.textContent = `> ${message}`;
+    return div;
+  }
+
   function updateUI(state) {
     statusDiv.textContent = state.status;
     if (state.status === 'Running') {
@@ -16,8 +24,38 @@ document.addEventListener('DOMContentLoaded', () => {
         statusDiv.style.background = '#e8f0fe'; statusDiv.style.color = '#1967d2';
     }
     
-    logDiv.innerHTML = state.logs.map(l => `<div>> ${l}</div>`).join('');
-    logDiv.scrollTop = logDiv.scrollHeight;
+    // Incremental O(1) log updates
+    if (state.logs) {
+      const currentTotal = state.totalLogs || state.logs.length;
+
+      if (currentTotal < lastRenderedTotalLogs) {
+        logDiv.textContent = '';
+        lastRenderedTotalLogs = 0;
+      }
+
+      if (currentTotal > lastRenderedTotalLogs) {
+        const newLogsCount = Math.min(currentTotal - lastRenderedTotalLogs, state.logs.length);
+        const newLogs = state.logs.slice(-newLogsCount);
+
+        if (lastRenderedTotalLogs === 0 && logDiv.children.length === 0 && state.logs.length > newLogs.length) {
+          const fragment = document.createDocumentFragment();
+          state.logs.forEach(l => fragment.appendChild(createLogNode(l)));
+          logDiv.textContent = '';
+          logDiv.appendChild(fragment);
+        } else {
+          const fragment = document.createDocumentFragment();
+          newLogs.forEach(l => fragment.appendChild(createLogNode(l)));
+          logDiv.appendChild(fragment);
+
+          while (logDiv.children.length > 50) {
+            logDiv.removeChild(logDiv.firstElementChild);
+          }
+        }
+
+        logDiv.scrollTop = logDiv.scrollHeight;
+        lastRenderedTotalLogs = currentTotal;
+      }
+    }
     
     if (state.goal && !goalInput.value) goalInput.value = state.goal;
     
