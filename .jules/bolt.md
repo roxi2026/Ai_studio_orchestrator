@@ -1,0 +1,3 @@
+## 2026-03-08 - Parallel Extension Bundle Fetching in Distribution Portal
+**Learning:** The React web app packages static Chrome extension assets dynamically into a `.zip` file on user download. Serial `for..of` fetch loops introduced a 12-request network latency waterfall (~350ms wait time). Concurrent fetching with `Promise.all` collapsed the waterfall down to the single longest roundtrip (~45ms), improving download preparation speed by ~7.7x.
+**Action:** When packaging dynamic multi-file bundles from static assets or APIs, always leverage `Promise.all` or `Promise.allSettled` to fetch resources concurrently.
